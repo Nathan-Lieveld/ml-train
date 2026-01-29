@@ -12,122 +12,119 @@ struct CameraDetectionView: View {
     @State private var showDebugLog = false
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                // Camera preview - full screen
-                CameraPreviewView(session: camera.session)
-                    .ignoresSafeArea()
+        ZStack {
+            // Camera preview - full screen beyond safe area
+            CameraPreviewView(session: camera.session)
+                .ignoresSafeArea()
 
-                // Bounding boxes overlay
-                DetectionOverlay(detections: camera.detections)
-                    .ignoresSafeArea()
+            // Bounding boxes overlay - matches camera preview
+            DetectionOverlay(detections: camera.detections)
+                .ignoresSafeArea()
 
-                // UI overlay
-                VStack(spacing: 0) {
-                    // Top bar with FPS and status
-                    HStack {
-                        // Status indicator
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(camera.permissionGranted ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(camera.isDetecting ? "Detecting" : "Camera")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.black.opacity(0.6))
-                        .cornerRadius(12)
-
-                        Spacer()
-
-                        // Debug toggle
-                        Button(action: { showDebugLog.toggle() }) {
-                            Image(systemName: showDebugLog ? "ladybug.fill" : "ladybug")
-                                .foregroundColor(.white)
-                                .padding(6)
-                                .background(Color.black.opacity(0.6))
-                                .cornerRadius(8)
-                        }
-
-                        FPSBadge(fps: camera.fps)
+            // UI overlay - respects safe area so controls stay visible
+            VStack(spacing: 0) {
+                // Top bar with FPS and status
+                HStack {
+                    // Status indicator
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(camera.permissionGranted ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(camera.isDetecting ? "Detecting" : "Camera")
+                            .font(.caption)
+                            .foregroundColor(.white)
                     }
-                    .padding(.horizontal)
-                    .padding(.top, geometry.safeAreaInsets.top + 8)
-
-                    // Debug log panel
-                    if showDebugLog {
-                        DebugLogView(logs: camera.debugLog)
-                            .frame(maxHeight: 200)
-                            .padding(.horizontal, 8)
-                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(12)
 
                     Spacer()
 
-                    // Bottom controls
-                    VStack(spacing: 8) {
-                        if let error = errorMessage {
-                            Text(error)
-                                .font(.caption)
+                    // Debug toggle
+                    Button(action: { showDebugLog.toggle() }) {
+                        Image(systemName: showDebugLog ? "ladybug.fill" : "ladybug")
+                            .foregroundColor(.white)
+                            .padding(6)
+                            .background(Color.black.opacity(0.6))
+                            .cornerRadius(8)
+                    }
+
+                    FPSBadge(fps: camera.fps)
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+                // Debug log panel
+                if showDebugLog {
+                    DebugLogView(logs: camera.debugLog)
+                        .frame(maxHeight: 200)
+                        .padding(.horizontal, 8)
+                }
+
+                Spacer()
+
+                // Bottom controls
+                VStack(spacing: 8) {
+                    if let error = errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(8)
+                            .background(Color.red.opacity(0.8))
+                            .cornerRadius(8)
+                            .padding(.horizontal)
+                    }
+
+                    // Confidence threshold slider
+                    HStack(spacing: 8) {
+                        Text("Conf")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.8))
+                        Slider(value: $camera.confidenceThreshold, in: 0.1...0.95, step: 0.05)
+                            .tint(.blue)
+                        Text(String(format: "%.0f%%", camera.confidenceThreshold * 100))
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white)
+                            .frame(width: 36)
+                    }
+                    .padding(.horizontal, 16)
+
+                    HStack(spacing: 12) {
+                        Button(action: { showModelPicker = true }) {
+                            Label(selectedModel.isEmpty ? "Select Model" : selectedModel,
+                                  systemImage: "cube.box")
+                                .font(.subheadline)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.blue)
                                 .foregroundColor(.white)
-                                .padding(8)
-                                .background(Color.red.opacity(0.8))
                                 .cornerRadius(8)
-                                .padding(.horizontal)
                         }
 
-                        // Confidence threshold slider
-                        HStack(spacing: 8) {
-                            Text("Conf")
-                                .font(.caption2)
-                                .foregroundColor(.white.opacity(0.8))
-                            Slider(value: $camera.confidenceThreshold, in: 0.1...0.95, step: 0.05)
-                                .tint(.blue)
-                            Text(String(format: "%.0f%%", camera.confidenceThreshold * 100))
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundColor(.white)
-                                .frame(width: 36)
-                        }
-                        .padding(.horizontal, 16)
-
-                        HStack(spacing: 12) {
-                            Button(action: { showModelPicker = true }) {
-                                Label(selectedModel.isEmpty ? "Select Model" : selectedModel,
-                                      systemImage: "cube.box")
+                        if camera.isDetecting {
+                            Button(action: { camera.stopDetection() }) {
+                                Label("Stop", systemImage: "stop.fill")
                                     .font(.subheadline)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
-                                    .background(Color.blue)
+                                    .background(Color.red)
                                     .foregroundColor(.white)
                                     .cornerRadius(8)
                             }
-
-                            if camera.isDetecting {
-                                Button(action: { camera.stopDetection() }) {
-                                    Label("Stop", systemImage: "stop.fill")
-                                        .font(.subheadline)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                        .background(Color.red)
-                                        .foregroundColor(.white)
-                                        .cornerRadius(8)
-                                }
-                            }
                         }
                     }
-                    .padding()
-                    .background(
-                        LinearGradient(
-                            colors: [Color.black.opacity(0), Color.black.opacity(0.7)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
                 }
+                .padding()
+                .background(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0), Color.black.opacity(0.7)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             }
         }
-        .ignoresSafeArea()
         .sheet(isPresented: $showModelPicker) {
             ModelPickerView(selectedModel: $selectedModel) { modelPath in
                 loadModel(path: modelPath)

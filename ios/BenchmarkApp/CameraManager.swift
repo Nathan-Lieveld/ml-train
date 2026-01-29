@@ -190,7 +190,7 @@ class CameraManager: NSObject, ObservableObject {
             }
             self?.processDetections(request: request)
         }
-        request.imageCropAndScaleOption = .scaleFill
+        request.imageCropAndScaleOption = .scaleFit
 
         currentRequest = request
         log("Model ready for detection")
