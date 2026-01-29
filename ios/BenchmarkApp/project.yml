@@ -16,12 +16,24 @@ targets:
           - Info.plist
           - "*.mlpackage"
           - "*.mlmodelc"
-      # CoreML models as folder references
+      # CoreML models as folder references (optional — only exported models are bundled)
       - path: yolov8n.mlpackage
         optional: true
         buildPhase: resources
         type: folder
       - path: yolov8s.mlpackage
+        optional: true
+        buildPhase: resources
+        type: folder
+      - path: yolov8m.mlpackage
+        optional: true
+        buildPhase: resources
+        type: folder
+      - path: yolo11n.mlpackage
+        optional: true
+        buildPhase: resources
+        type: folder
+      - path: yolo11s.mlpackage
         optional: true
         buildPhase: resources
         type: folder

@@ -8,16 +8,18 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: 'Models to bundle (comma-separated: yolov8n,yolov8s or none)'
+        description: 'Models to bundle (comma-separated, e.g. yolov8n,yolov8s,yolo11n or none)'
         required: false
-        default: 'yolov8n,yolov8s'
+        default: 'yolov8n,yolov8s,yolo11n'
 
 jobs:
   build:
     runs-on: macos-15
 
     env:
-      MODELS: ${{ github.event.inputs.models || 'yolov8n,yolov8s' }}
+      MODELS: ${{ github.event.inputs.models || 'yolov8n,yolov8s,yolo11n' }}
+      # Bump to invalidate all caches (e.g. after dependency version changes)
+      CACHE_VERSION: v1
 
     steps:
       - name: Checkout
@@ -28,19 +30,57 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Export models to CoreML
+      - name: Install export dependencies
         if: ${{ env.MODELS != 'none' }}
         run: |
           # Pin coremltools to 8.x (9.0 has BlobWriter issues)
           python -m pip install "ultralytics>=8.3.0" "coremltools>=8.0,<9.0" "numpy<2.0"
+          echo "ULTRALYTICS_VERSION=$(python -c 'import ultralytics; print(ultralytics.__version__)')" >> $GITHUB_ENV
+          echo "COREMLTOOLS_VERSION=$(python -c 'import coremltools; print(coremltools.__version__)')" >> $GITHUB_ENV
 
-          # Export each model
+      - name: Cache model weights (.pt)
+        if: ${{ env.MODELS != 'none' }}
+        uses: actions/cache@v4
+        with:
+          path: model-weights
+          key: weights-${{ env.CACHE_VERSION }}-${{ env.MODELS }}-ul${{ env.ULTRALYTICS_VERSION }}
+          restore-keys: |
+            weights-${{ env.CACHE_VERSION }}-
+
+      - name: Cache CoreML exports (.mlpackage)
+        if: ${{ env.MODELS != 'none' }}
+        uses: actions/cache@v4
+        with:
+          path: model-exports
+          key: coreml-${{ env.CACHE_VERSION }}-${{ env.MODELS }}-ul${{ env.ULTRALYTICS_VERSION }}-ct${{ env.COREMLTOOLS_VERSION }}
+          restore-keys: |
+            coreml-${{ env.CACHE_VERSION }}-
+
+      - name: Export models to CoreML
+        if: ${{ env.MODELS != 'none' }}
+        run: |
+          mkdir -p model-weights model-exports
+
           IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
           for MODEL_NAME in "${MODEL_ARRAY[@]}"; do
             MODEL_NAME=$(echo "$MODEL_NAME" | xargs)  # trim whitespace
+
+            # Use cached export if available
+            if [ -d "model-exports/${MODEL_NAME}.mlpackage" ]; then
+              echo "=== ${MODEL_NAME}: cached export found, skipping ==="
+              cp -r "model-exports/${MODEL_NAME}.mlpackage" ios/BenchmarkApp/
+              continue
+            fi
+
             echo "========================================="
             echo "Exporting ${MODEL_NAME} to CoreML..."
             echo "========================================="
+
+            # Restore cached weights if available
+            if [ -f "model-weights/${MODEL_NAME}.pt" ]; then
+              echo "Using cached weights for ${MODEL_NAME}"
+              cp "model-weights/${MODEL_NAME}.pt" .
+            fi
 
             python -c "
           from ultralytics import YOLO
@@ -48,9 +88,13 @@ jobs:
           model.export(format='coreml', imgsz=640, half=True, nms=True)
           "
 
-            # Verify and move
+            # Cache weights for next run
+            cp -f "${MODEL_NAME}.pt" model-weights/ 2>/dev/null || true
+
+            # Verify, cache, and move
             if [ -d "${MODEL_NAME}.mlpackage" ]; then
-              mv ${MODEL_NAME}.mlpackage ios/BenchmarkApp/
+              cp -r "${MODEL_NAME}.mlpackage" model-exports/
+              mv "${MODEL_NAME}.mlpackage" ios/BenchmarkApp/
               echo "${MODEL_NAME}.mlpackage moved to ios/BenchmarkApp/"
             else
               echo "ERROR: ${MODEL_NAME}.mlpackage not created!"
@@ -72,26 +116,6 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
-
-      - name: Configure project for selected models
-        working-directory: ios/BenchmarkApp
-        run: |
-          # Remove model entries that aren't being bundled
-          # This prevents Xcode from trying to copy non-existent models
-          if [ "$MODELS" = "none" ]; then
-            sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
-            sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
-          else
-            # Remove entries for models not in the list
-            if [[ ! "$MODELS" =~ "yolov8n" ]]; then
-              sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
-            fi
-            if [[ ! "$MODELS" =~ "yolov8s" ]]; then
-              sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
-            fi
-          fi
-          echo "Updated project.yml sources:"
-          grep -A 25 "sources:" project.yml | head -30
 
       - name: Generate Xcode Project
         working-directory: ios/BenchmarkApp

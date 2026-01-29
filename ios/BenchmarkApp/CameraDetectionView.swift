@@ -158,7 +158,7 @@ struct CameraDetectionView: View {
         }
 
         // Try to auto-load yolov8n if bundled
-        let defaultModels = ["yolov8n", "yolov8s", "yolov8m"]
+        let defaultModels = ["yolov8n", "yolov8s", "yolov8m", "yolo11n", "yolo11s"]
         for modelName in defaultModels {
             let hasCompiled = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") != nil
             let hasPackage = Bundle.main.url(forResource: modelName, withExtension: "mlpackage") != nil
