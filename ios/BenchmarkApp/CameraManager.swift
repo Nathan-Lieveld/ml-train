@@ -8,6 +8,9 @@ class CameraManager: NSObject, ObservableObject {
     @Published var fps: Double = 0
     @Published var isDetecting = false
     @Published var permissionGranted = false
+    @Published var debugLog: [String] = []
+
+    private let maxLogLines = 50
 
     let session = AVCaptureSession()
     private var videoOutput: AVCaptureVideoDataOutput?
@@ -41,15 +44,32 @@ class CameraManager: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        log("CameraManager initialized")
+    }
+
+    func log(_ message: String) {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        let entry = "[\(timestamp)] \(message)"
+        print(entry)  // Also print to Xcode console
+        DispatchQueue.main.async {
+            self.debugLog.append(entry)
+            if self.debugLog.count > self.maxLogLines {
+                self.debugLog.removeFirst()
+            }
+        }
     }
 
     func checkPermissions() {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        log("Camera permission status: \(status.rawValue)")
+        switch status {
         case .authorized:
             permissionGranted = true
             setupCamera()
         case .notDetermined:
+            log("Requesting camera permission...")
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                self?.log("Permission response: \(granted)")
                 DispatchQueue.main.async {
                     self?.permissionGranted = granted
                     if granted {
@@ -58,6 +78,7 @@ class CameraManager: NSObject, ObservableObject {
                 }
             }
         default:
+            log("Camera permission denied")
             permissionGranted = false
         }
     }
@@ -104,41 +125,74 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     func loadModel(path: String) async throws {
+        log("Loading model: \(path)")
         let modelURL: URL
 
         // Try bundle first
         if let bundleURL = Bundle.main.url(forResource: path, withExtension: "mlmodelc") {
+            log("Found compiled model in bundle: \(bundleURL.lastPathComponent)")
             modelURL = bundleURL
         } else if let bundleURL = Bundle.main.url(forResource: path, withExtension: "mlpackage") {
+            log("Found mlpackage in bundle: \(bundleURL.lastPathComponent)")
             modelURL = bundleURL
         } else if path.hasPrefix("/") {
+            log("Using absolute path: \(path)")
             modelURL = URL(fileURLWithPath: path)
         } else {
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
             modelURL = docs.appendingPathComponent(path)
+            log("Using documents path: \(modelURL.path)")
+        }
+
+        guard FileManager.default.fileExists(atPath: modelURL.path) else {
+            log("ERROR: Model file not found at \(modelURL.path)")
+            throw BenchmarkError.modelNotFound(modelURL.path)
         }
 
         // Compile if needed
         let compiledURL: URL
         if modelURL.pathExtension == "mlmodelc" {
+            log("Model already compiled")
             compiledURL = modelURL
         } else {
+            log("Compiling model...")
             compiledURL = try await MLModel.compileModel(at: modelURL)
+            log("Compiled to: \(compiledURL.lastPathComponent)")
         }
 
         // Load model
+        log("Loading MLModel with computeUnits=all...")
         let config = MLModelConfiguration()
         config.computeUnits = .all  // Use Neural Engine
         let mlModel = try MLModel(contentsOf: compiledURL, configuration: config)
+
+        // Log model info
+        let inputs = mlModel.modelDescription.inputDescriptionsByName
+        let outputs = mlModel.modelDescription.outputDescriptionsByName
+        log("Model inputs: \(inputs.keys.joined(separator: ", "))")
+        log("Model outputs: \(outputs.keys.joined(separator: ", "))")
+        for (name, desc) in outputs {
+            if let constraint = desc.multiArrayConstraint {
+                log("  \(name) shape: \(constraint.shape)")
+            } else {
+                log("  \(name) type: \(desc.type.rawValue)")
+            }
+        }
+
         let visionModel = try VNCoreMLModel(for: mlModel)
+        log("VNCoreMLModel created successfully")
 
         // Create detection request
         let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
+            if let error = error {
+                self?.log("Detection error: \(error.localizedDescription)")
+            }
             self?.processDetections(request: request)
         }
         request.imageCropAndScaleOption = .scaleFill
 
         currentRequest = request
+        log("Model ready for detection")
 
         await MainActor.run {
             self.isDetecting = true
@@ -153,14 +207,26 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    private var lastResultLogTime = Date.distantPast
+    private var framesSinceLog = 0
+
     private func processDetections(request: VNRequest) {
-        guard let results = request.results else { return }
+        guard let results = request.results else {
+            log("No results from Vision request")
+            return
+        }
+
+        framesSinceLog += 1
+        let shouldLog = Date().timeIntervalSince(lastResultLogTime) > 2.0  // Log every 2 seconds
 
         var newDetections: [Detection] = []
 
         // Handle different result types
         if let observations = results as? [VNRecognizedObjectObservation] {
-            // Standard object detection
+            // Standard object detection (NMS built into model)
+            if shouldLog {
+                log("Output: VNRecognizedObjectObservation x\(observations.count)")
+            }
             for observation in observations where observation.confidence > 0.5 {
                 if let topLabel = observation.labels.first {
                     let colorIndex = abs(topLabel.identifier.hashValue) % Detection.colors.count
@@ -174,7 +240,26 @@ class CameraManager: NSObject, ObservableObject {
             }
         } else if let observations = results as? [VNCoreMLFeatureValueObservation] {
             // YOLOv8 raw output - parse manually
+            if shouldLog {
+                log("Output: VNCoreMLFeatureValueObservation x\(observations.count)")
+                for obs in observations {
+                    if let arr = obs.featureValue.multiArrayValue {
+                        log("  shape: \(arr.shape), type: \(arr.dataType.rawValue)")
+                    }
+                }
+            }
             newDetections = parseYOLOOutput(observations)
+        } else {
+            if shouldLog {
+                let types = results.map { String(describing: type(of: $0)) }
+                log("Unknown result types: \(Set(types).joined(separator: ", "))")
+            }
+        }
+
+        if shouldLog {
+            log("Detections: \(newDetections.count), frames: \(framesSinceLog)")
+            lastResultLogTime = Date()
+            framesSinceLog = 0
         }
 
         DispatchQueue.main.async { [weak self] in

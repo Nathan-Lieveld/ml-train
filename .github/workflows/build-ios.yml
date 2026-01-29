@@ -63,6 +63,25 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Configure project for selected model
+        working-directory: ios/BenchmarkApp
+        run: |
+          # Remove model entries that don't match the selected model
+          # This prevents Xcode from trying to copy non-existent models
+          if [ "$MODEL_NAME" = "yolov8n" ]; then
+            # Remove yolov8s entry (4 lines: path, optional, buildPhase, type)
+            sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
+          elif [ "$MODEL_NAME" = "yolov8s" ]; then
+            # Remove yolov8n entry
+            sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
+          elif [ "$MODEL_NAME" = "none" ]; then
+            # Remove both model entries
+            sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
+            sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
+          fi
+          echo "Updated project.yml sources:"
+          grep -A 20 "sources:" project.yml | head -25
+
       - name: Generate Xcode Project
         working-directory: ios/BenchmarkApp
         run: xcodegen generate

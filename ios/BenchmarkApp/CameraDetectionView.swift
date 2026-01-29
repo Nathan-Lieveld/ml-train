@@ -9,6 +9,7 @@ struct CameraDetectionView: View {
     @State private var showModelPicker = false
     @State private var errorMessage: String?
     @State private var hasAutoLoaded = false
+    @State private var showDebugLog = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -41,10 +42,26 @@ struct CameraDetectionView: View {
 
                         Spacer()
 
+                        // Debug toggle
+                        Button(action: { showDebugLog.toggle() }) {
+                            Image(systemName: showDebugLog ? "ladybug.fill" : "ladybug")
+                                .foregroundColor(.white)
+                                .padding(6)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(8)
+                        }
+
                         FPSBadge(fps: camera.fps)
                     }
                     .padding(.horizontal)
                     .padding(.top, geometry.safeAreaInsets.top + 8)
+
+                    // Debug log panel
+                    if showDebugLog {
+                        DebugLogView(logs: camera.debugLog)
+                            .frame(maxHeight: 200)
+                            .padding(.horizontal, 8)
+                    }
 
                     Spacer()
 
@@ -116,16 +133,30 @@ struct CameraDetectionView: View {
         guard !hasAutoLoaded else { return }
         hasAutoLoaded = true
 
+        camera.log("Searching for bundled models...")
+
+        // List all bundle resources for debugging
+        if let resourcePath = Bundle.main.resourcePath {
+            let fm = FileManager.default
+            if let contents = try? fm.contentsOfDirectory(atPath: resourcePath) {
+                let models = contents.filter { $0.contains("yolo") || $0.hasSuffix(".mlmodelc") || $0.hasSuffix(".mlpackage") }
+                camera.log("ML files in bundle: \(models.isEmpty ? "none" : models.joined(separator: ", "))")
+            }
+        }
+
         // Try to auto-load yolov8n if bundled
         let defaultModels = ["yolov8n", "yolov8s", "yolov8m"]
         for modelName in defaultModels {
-            if Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") != nil ||
-               Bundle.main.url(forResource: modelName, withExtension: "mlpackage") != nil {
+            let hasCompiled = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") != nil
+            let hasPackage = Bundle.main.url(forResource: modelName, withExtension: "mlpackage") != nil
+            if hasCompiled || hasPackage {
+                camera.log("Found \(modelName) (compiled: \(hasCompiled), package: \(hasPackage))")
                 selectedModel = modelName
                 loadModel(path: modelName)
                 return
             }
         }
+        camera.log("No bundled models found")
     }
 
     private func loadModel(path: String) {
@@ -345,5 +376,36 @@ extension CGRect {
             width: width * size.width,
             height: height * size.height
         )
+    }
+}
+
+// MARK: - Debug Log View
+
+struct DebugLogView: View {
+    let logs: [String]
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(logs.enumerated()), id: \.offset) { index, log in
+                        Text(log)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.green)
+                            .id(index)
+                    }
+                }
+                .padding(8)
+            }
+            .background(Color.black.opacity(0.85))
+            .cornerRadius(8)
+            .onChange(of: logs.count) { _ in
+                if let last = logs.indices.last {
+                    withAnimation {
+                        proxy.scrollTo(last, anchor: .bottom)
+                    }
+                }
+            }
+        }
     }
 }
