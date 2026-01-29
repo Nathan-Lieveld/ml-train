@@ -117,7 +117,6 @@ struct CameraDetectionView: View {
                         }
                     }
                     .padding()
-                    .padding(.bottom, 60) // Space for tab bar
                     .background(
                         LinearGradient(
                             colors: [Color.black.opacity(0), Color.black.opacity(0.7)],
