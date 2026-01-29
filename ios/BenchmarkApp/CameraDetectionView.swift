@@ -13,19 +13,11 @@ struct CameraDetectionView: View {
 
     var body: some View {
         ZStack {
-            // Camera preview - full screen beyond safe area
-            CameraPreviewView(session: camera.session)
-                .ignoresSafeArea()
+            Color.black.ignoresSafeArea()
 
-            // Bounding boxes overlay - matches camera preview
-            DetectionOverlay(detections: camera.detections)
-                .ignoresSafeArea()
-
-            // UI overlay - respects safe area so controls stay visible
             VStack(spacing: 0) {
-                // Top bar with FPS and status
+                // Top bar: status, model selector, controls
                 HStack {
-                    // Status indicator
                     HStack(spacing: 4) {
                         Circle()
                             .fill(camera.permissionGranted ? Color.green : Color.red)
@@ -34,95 +26,76 @@ struct CameraDetectionView: View {
                             .font(.caption)
                             .foregroundColor(.white)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(12)
 
                     Spacer()
 
-                    // Debug toggle
-                    Button(action: { showDebugLog.toggle() }) {
-                        Image(systemName: showDebugLog ? "ladybug.fill" : "ladybug")
-                            .foregroundColor(.white)
-                            .padding(6)
-                            .background(Color.black.opacity(0.6))
-                            .cornerRadius(8)
-                    }
-
-                    FPSBadge(fps: camera.fps)
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
-
-                // Debug log panel
-                if showDebugLog {
-                    DebugLogView(logs: camera.debugLog)
-                        .frame(maxHeight: 200)
-                        .padding(.horizontal, 8)
-                }
-
-                Spacer()
-
-                // Bottom controls
-                VStack(spacing: 8) {
-                    if let error = errorMessage {
-                        Text(error)
+                    Button(action: { showModelPicker = true }) {
+                        Label(selectedModel.isEmpty ? "Model" : selectedModel,
+                              systemImage: "cube.box")
                             .font(.caption)
                             .foregroundColor(.white)
-                            .padding(8)
-                            .background(Color.red.opacity(0.8))
-                            .cornerRadius(8)
-                            .padding(.horizontal)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue)
+                            .cornerRadius(6)
                     }
 
-                    // Confidence threshold slider
-                    HStack(spacing: 8) {
-                        Text("Conf")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.8))
-                        Slider(value: $camera.confidenceThreshold, in: 0.1...0.95, step: 0.05)
-                            .tint(.blue)
-                        Text(String(format: "%.0f%%", camera.confidenceThreshold * 100))
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white)
-                            .frame(width: 36)
+                    if camera.isDetecting {
+                        Button(action: { camera.stopDetection() }) {
+                            Image(systemName: "stop.fill")
+                                .foregroundColor(.red)
+                                .padding(6)
+                        }
                     }
-                    .padding(.horizontal, 16)
 
-                    HStack(spacing: 12) {
-                        Button(action: { showModelPicker = true }) {
-                            Label(selectedModel.isEmpty ? "Select Model" : selectedModel,
-                                  systemImage: "cube.box")
-                                .font(.subheadline)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
-                        }
-
-                        if camera.isDetecting {
-                            Button(action: { camera.stopDetection() }) {
-                                Label("Stop", systemImage: "stop.fill")
-                                    .font(.subheadline)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Color.red)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(8)
-                            }
-                        }
+                    Button(action: { showDebugLog.toggle() }) {
+                        Image(systemName: showDebugLog ? "terminal.fill" : "terminal")
+                            .foregroundColor(showDebugLog ? .green : .white)
+                            .padding(6)
                     }
                 }
-                .padding()
-                .background(
-                    LinearGradient(
-                        colors: [Color.black.opacity(0), Color.black.opacity(0.7)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+
+                // Confidence slider
+                HStack(spacing: 8) {
+                    Text("Conf")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.7))
+                    Slider(value: $camera.confidenceThreshold, in: 0.1...0.95, step: 0.05)
+                        .tint(.blue)
+                    Text(String(format: "%.0f%%", camera.confidenceThreshold * 100))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white)
+                        .frame(width: 36)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+
+                if let error = errorMessage {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(6)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.red.opacity(0.8))
+                }
+
+                // Camera preview + detection overlay
+                ZStack {
+                    CameraPreviewView(session: camera.session)
+                    DetectionOverlay(detections: camera.detections)
+                }
+                .aspectRatio(9.0 / 16.0, contentMode: .fit)
+                .clipped()
+                .layoutPriority(1)
+
+                // Bottom area: debug console or empty
+                if showDebugLog {
+                    DebugConsoleView(logs: camera.debugLog, fps: camera.fps)
+                }
+
+                Spacer(minLength: 0)
             }
         }
         .sheet(isPresented: $showModelPicker) {
@@ -132,7 +105,6 @@ struct CameraDetectionView: View {
         }
         .onAppear {
             camera.checkPermissions()
-            // Delay auto-load to let camera initialize
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 autoLoadBundledModel()
             }
@@ -145,7 +117,6 @@ struct CameraDetectionView: View {
 
         camera.log("Searching for bundled models...")
 
-        // List all bundle resources for debugging
         if let resourcePath = Bundle.main.resourcePath {
             let fm = FileManager.default
             if let contents = try? fm.contentsOfDirectory(atPath: resourcePath) {
@@ -154,7 +125,6 @@ struct CameraDetectionView: View {
             }
         }
 
-        // Try to auto-load yolov8n if bundled
         let defaultModels = ["yolov8n", "yolov8s", "yolov8m", "yolo11n", "yolo11s"]
         for modelName in defaultModels {
             let hasCompiled = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") != nil
@@ -196,9 +166,7 @@ struct CameraPreviewView: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {
-        // Layout is handled by PreviewView
-    }
+    func updateUIView(_ uiView: PreviewView, context: Context) {}
 
     class PreviewView: UIView {
         override class var layerClass: AnyClass {
@@ -239,26 +207,51 @@ struct DetectionOverlay: View {
     }
 }
 
-// MARK: - FPS Badge
+// MARK: - Debug Console (CLI-style)
 
-struct FPSBadge: View {
+struct DebugConsoleView: View {
+    let logs: [String]
     let fps: Double
 
-    var color: Color {
-        if fps >= 30 { return .green }
-        if fps >= 15 { return .yellow }
-        return .red
-    }
-
     var body: some View {
-        Text(String(format: "%.0f", fps))
-            .font(.system(size: 14, weight: .bold, design: .monospaced))
-            .foregroundColor(.white)
-            .frame(minWidth: 32)
-            .padding(.horizontal, 6)
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.green.opacity(0.3))
+                .frame(height: 1)
+
+            HStack {
+                Text(">_")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(.green)
+                Spacer()
+                Text(String(format: "%.0f fps", fps))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(fps >= 30 ? .green : fps >= 15 ? .yellow : .red)
+            }
+            .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(color.opacity(0.8))
-            .cornerRadius(6)
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(logs.enumerated()), id: \.offset) { index, entry in
+                            Text(entry)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.green.opacity(0.8))
+                                .id(index)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                }
+                .onChange(of: logs.count) { _ in
+                    if let last = logs.indices.last {
+                        proxy.scrollTo(last, anchor: .bottom)
+                    }
+                }
+            }
+        }
+        .background(Color.black)
     }
 }
 
@@ -317,7 +310,6 @@ struct ModelPickerView: View {
                     .disabled(customPath.isEmpty)
                 }
 
-                // Debug section
                 Section("Bundle Contents (Debug)") {
                     ForEach(allBundleFiles.prefix(20), id: \.self) { file in
                         Text(file)
@@ -386,36 +378,5 @@ extension CGRect {
             width: width * size.width,
             height: height * size.height
         )
-    }
-}
-
-// MARK: - Debug Log View
-
-struct DebugLogView: View {
-    let logs: [String]
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(logs.enumerated()), id: \.offset) { index, log in
-                        Text(log)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(.green)
-                            .id(index)
-                    }
-                }
-                .padding(8)
-            }
-            .background(Color.black.opacity(0.85))
-            .cornerRadius(8)
-            .onChange(of: logs.count) { _ in
-                if let last = logs.indices.last {
-                    withAnimation {
-                        proxy.scrollTo(last, anchor: .bottom)
-                    }
-                }
-            }
-        }
     }
 }
