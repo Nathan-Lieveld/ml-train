@@ -1,4 +1,4 @@
-"""Phase 1 Baseline: YOLOv8n object detection for iPhone deployment."""
+"""Baseline YOLO object detection for iPhone deployment."""
 from __future__ import annotations
 
 import argparse
@@ -10,30 +10,39 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-def train_yolov8n(
-    data_yaml: str,
+def train_model(
+    model_name: str = "yolo11n.pt",
+    data_yaml: str = "lvis.yaml",
     epochs: int = 100,
     imgsz: int = 640,
     batch: int = 16,
     project: str = "runs/detect",
-    name: str = "yolov8n_baseline",
+    name: str | None = None,
+    freeze: int | None = None,
 ) -> Path:
-    """Fine-tune YOLOv8n on a custom dataset.
+    """Fine-tune a YOLO model on a dataset.
 
     Args:
-        data_yaml: Path to dataset YAML config (COCO format)
+        model_name: Pretrained YOLO checkpoint (e.g. yolo11n.pt, yolov8s.pt)
+        data_yaml: Path or name of dataset YAML config (e.g. lvis.yaml, coco.yaml)
         epochs: Number of training epochs
         imgsz: Input image size
         batch: Batch size
         project: Output project directory
-        name: Experiment name
+        name: Experiment name (defaults to model stem + dataset stem)
+        freeze: Number of backbone layers to freeze (None = train all)
 
     Returns:
         Path to best checkpoint
     """
-    model = YOLO("yolov8n.pt")
+    if name is None:
+        model_stem = Path(model_name).stem
+        data_stem = Path(data_yaml).stem
+        name = f"{model_stem}_{data_stem}"
 
-    model.train(
+    model = YOLO(model_name)
+
+    train_kwargs = dict(
         data=data_yaml,
         epochs=epochs,
         imgsz=imgsz,
@@ -46,6 +55,10 @@ def train_yolov8n(
         save=True,
         plots=True,
     )
+    if freeze is not None:
+        train_kwargs["freeze"] = freeze
+
+    model.train(**train_kwargs)
 
     best_path = Path(project) / name / "weights" / "best.pt"
     print(f"Training complete. Best model: {best_path}")
@@ -189,16 +202,21 @@ def validate_model(checkpoint: str, data_yaml: str) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="YOLOv8n baseline for iPhone detection")
+    parser = argparse.ArgumentParser(description="YOLO baseline for iPhone detection")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Train command
-    train_parser = subparsers.add_parser("train", help="Train YOLOv8n")
-    train_parser.add_argument("--data", type=str, required=True, help="Dataset YAML path")
+    train_parser = subparsers.add_parser("train", help="Fine-tune a YOLO model")
+    train_parser.add_argument("--model", type=str, default="yolo11n.pt",
+                              help="Pretrained model (default: yolo11n.pt)")
+    train_parser.add_argument("--data", type=str, default="lvis.yaml",
+                              help="Dataset YAML (default: lvis.yaml)")
     train_parser.add_argument("--epochs", type=int, default=100)
     train_parser.add_argument("--imgsz", type=int, default=640)
     train_parser.add_argument("--batch", type=int, default=16)
-    train_parser.add_argument("--name", type=str, default="yolov8n_baseline")
+    train_parser.add_argument("--name", type=str, default=None)
+    train_parser.add_argument("--freeze", type=int, default=None,
+                              help="Number of backbone layers to freeze")
 
     # Export command
     export_parser = subparsers.add_parser("export", help="Export model")
@@ -226,12 +244,14 @@ def main():
     args = parser.parse_args()
 
     if args.command == "train":
-        train_yolov8n(
+        train_model(
+            model_name=args.model,
             data_yaml=args.data,
             epochs=args.epochs,
             imgsz=args.imgsz,
             batch=args.batch,
             name=args.name,
+            freeze=args.freeze,
         )
     elif args.command == "export":
         export_model(
