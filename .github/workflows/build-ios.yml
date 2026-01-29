@@ -16,6 +16,9 @@ jobs:
   build:
     runs-on: macos-15
 
+    env:
+      MODEL_NAME: ${{ github.event.inputs.model || 'yolov8n' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,23 +28,37 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Export YOLOv8n to CoreML
-        if: ${{ github.event.inputs.model != 'none' }}
+      - name: Export model to CoreML
+        if: ${{ env.MODEL_NAME != 'none' }}
         run: |
-          MODEL="${{ github.event.inputs.model || 'yolov8n' }}"
-          echo "Exporting ${MODEL} to CoreML..."
+          echo "Exporting ${MODEL_NAME} to CoreML..."
 
-          # Use standalone Python 3.12 environment (coremltools needs <=3.12)
-          # Pin coremltools to 8.1 (9.0 has BlobWriter issues)
+          # Pin coremltools to 8.x (9.0 has BlobWriter issues)
           python -m pip install "ultralytics>=8.3.0" "coremltools>=8.0,<9.0" "numpy<2.0"
+
           python -c "
           from ultralytics import YOLO
-          model = YOLO('${MODEL}.pt')
+          model = YOLO('${MODEL_NAME}.pt')
           model.export(format='coreml', imgsz=640, half=True, nms=True)
           "
 
+          # Verify export
+          ls -la ${MODEL_NAME}.mlpackage || echo "ERROR: mlpackage not created!"
+
           # Move to app directory
-          mv ${MODEL}.mlpackage ios/BenchmarkApp/
+          mv ${MODEL_NAME}.mlpackage ios/BenchmarkApp/
+          echo "Model moved to ios/BenchmarkApp/"
+
+      - name: Verify model in app directory
+        run: |
+          echo "Contents of ios/BenchmarkApp/:"
+          ls -la ios/BenchmarkApp/
+          if [ -d "ios/BenchmarkApp/${MODEL_NAME}.mlpackage" ]; then
+            echo "Model ${MODEL_NAME}.mlpackage found!"
+            du -sh ios/BenchmarkApp/${MODEL_NAME}.mlpackage
+          else
+            echo "WARNING: Model not found in app directory"
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -64,12 +81,28 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+      - name: Verify model in app bundle
+        working-directory: ios/BenchmarkApp
+        run: |
+          echo "Contents of built app:"
+          ls -la build/Build/Products/Release-iphoneos/BenchmarkApp.app/
+          if [ -d "build/Build/Products/Release-iphoneos/BenchmarkApp.app/${MODEL_NAME}.mlmodelc" ]; then
+            echo "Compiled model found in app bundle!"
+            du -sh build/Build/Products/Release-iphoneos/BenchmarkApp.app/${MODEL_NAME}.mlmodelc
+          else
+            echo "WARNING: Compiled model NOT found in app bundle"
+            echo "Looking for any .mlmodelc files:"
+            find build/Build/Products/Release-iphoneos/BenchmarkApp.app -name "*.mlmodelc" -o -name "*.mlpackage" 2>/dev/null || echo "None found"
+          fi
+
       - name: Create IPA
         working-directory: ios/BenchmarkApp
         run: |
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/BenchmarkApp.app Payload/
           zip -r BenchmarkApp-unsigned.ipa Payload
+          echo "IPA size:"
+          du -sh BenchmarkApp-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4

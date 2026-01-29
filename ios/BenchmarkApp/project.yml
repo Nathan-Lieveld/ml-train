@@ -15,10 +15,16 @@ targets:
           - "*.entitlements"
           - Info.plist
           - "*.mlpackage"
-    resources:
-      - path: .
-        includes:
-          - "*.mlpackage"
+          - "*.mlmodelc"
+      # CoreML models as folder references
+      - path: yolov8n.mlpackage
+        optional: true
+        buildPhase: resources
+        type: folder
+      - path: yolov8s.mlpackage
+        optional: true
+        buildPhase: resources
+        type: folder
     info:
       path: Info.plist
       properties:
