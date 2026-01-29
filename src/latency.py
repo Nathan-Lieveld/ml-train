@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import argparse
 import base64
-import io
 import json
 import tempfile
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -178,7 +176,11 @@ def create_minimal_model(op_config: OpConfig) -> nn.Module:
 
 
 def export_to_coreml_bytes(model: nn.Module, input_shape: tuple[int, ...]) -> bytes:
-    """Export model to CoreML and return as bytes."""
+    """Export model to CoreML and return as bytes.
+
+    Uses the older 'neuralnetwork' format which works on Linux
+    (doesn't require macOS-only native libraries).
+    """
     import coremltools as ct
 
     model.eval()
@@ -188,23 +190,13 @@ def export_to_coreml_bytes(model: nn.Module, input_shape: tuple[int, ...]) -> by
     mlmodel = ct.convert(
         traced,
         inputs=[ct.TensorType(name="input", shape=input_shape)],
-        convert_to="mlprogram",
-        compute_precision=ct.precision.FLOAT16,
+        convert_to="neuralnetwork",  # Works on Linux (no native libs needed)
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        model_path = Path(tmpdir) / "model.mlpackage"
+        model_path = Path(tmpdir) / "model.mlmodel"
         mlmodel.save(str(model_path))
-
-        # Zip the mlpackage directory
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file_path in model_path.rglob("*"):
-                if file_path.is_file():
-                    arcname = file_path.relative_to(model_path)
-                    zf.write(file_path, arcname)
-
-        return buffer.getvalue()
+        return model_path.read_bytes()
 
 
 def measure_op_latency(

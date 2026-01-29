@@ -28,6 +28,8 @@ struct ModelBenchmark {
         let modelURL: URL
         if modelPath.hasPrefix("/") {
             modelURL = URL(fileURLWithPath: modelPath)
+        } else if let bundleURL = Bundle.main.url(forResource: modelPath, withExtension: "mlmodel") {
+            modelURL = bundleURL
         } else if let bundleURL = Bundle.main.url(forResource: modelPath, withExtension: "mlpackage") {
             modelURL = bundleURL
         } else {
@@ -49,8 +51,8 @@ struct ModelBenchmark {
             throw BenchmarkError.loadFailed("Cannot determine input shape")
         }
 
-        let shape = constraint.shape.map { $0.intValue }
-        let inputArray = try MLMultiArray(shape: constraint.shape, dataType: .float16)
+        // Use the model's expected data type (neuralnetwork format uses float32)
+        let inputArray = try MLMultiArray(shape: constraint.shape, dataType: constraint.dataType)
         let inputFeatures = try MLDictionaryFeatureProvider(dictionary: [inputDesc.name: inputArray])
 
         var latencies: [Double] = []
@@ -82,7 +84,8 @@ struct ModelBenchmark {
 
     static func runFromData(_ modelData: Data, iterations: Int) async throws -> BenchmarkResult {
         let tempDir = FileManager.default.temporaryDirectory
-        let modelURL = tempDir.appendingPathComponent(UUID().uuidString + ".mlpackage")
+        // Use .mlmodel extension for neuralnetwork format (sent as raw bytes from Linux)
+        let modelURL = tempDir.appendingPathComponent(UUID().uuidString + ".mlmodel")
         try modelData.write(to: modelURL)
         defer { try? FileManager.default.removeItem(at: modelURL) }
         return try await run(modelPath: modelURL.path, iterations: iterations)
