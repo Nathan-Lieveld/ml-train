@@ -7,17 +7,17 @@ on:
       - '.github/workflows/build-ios.yml'
   workflow_dispatch:
     inputs:
-      model:
-        description: 'Model to bundle (yolov8n, yolov8s, or none)'
+      models:
+        description: 'Models to bundle (comma-separated: yolov8n,yolov8s or none)'
         required: false
-        default: 'yolov8n'
+        default: 'yolov8n,yolov8s'
 
 jobs:
   build:
     runs-on: macos-15
 
     env:
-      MODEL_NAME: ${{ github.event.inputs.model || 'yolov8n' }}
+      MODELS: ${{ github.event.inputs.models || 'yolov8n,yolov8s' }}
 
     steps:
       - name: Checkout
@@ -28,59 +28,70 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Export model to CoreML
-        if: ${{ env.MODEL_NAME != 'none' }}
+      - name: Export models to CoreML
+        if: ${{ env.MODELS != 'none' }}
         run: |
-          echo "Exporting ${MODEL_NAME} to CoreML..."
-
           # Pin coremltools to 8.x (9.0 has BlobWriter issues)
           python -m pip install "ultralytics>=8.3.0" "coremltools>=8.0,<9.0" "numpy<2.0"
 
-          python -c "
+          # Export each model
+          IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
+          for MODEL_NAME in "${MODEL_ARRAY[@]}"; do
+            MODEL_NAME=$(echo "$MODEL_NAME" | xargs)  # trim whitespace
+            echo "========================================="
+            echo "Exporting ${MODEL_NAME} to CoreML..."
+            echo "========================================="
+
+            python -c "
           from ultralytics import YOLO
           model = YOLO('${MODEL_NAME}.pt')
           model.export(format='coreml', imgsz=640, half=True, nms=True)
           "
 
-          # Verify export
-          ls -la ${MODEL_NAME}.mlpackage || echo "ERROR: mlpackage not created!"
+            # Verify and move
+            if [ -d "${MODEL_NAME}.mlpackage" ]; then
+              mv ${MODEL_NAME}.mlpackage ios/BenchmarkApp/
+              echo "${MODEL_NAME}.mlpackage moved to ios/BenchmarkApp/"
+            else
+              echo "ERROR: ${MODEL_NAME}.mlpackage not created!"
+              exit 1
+            fi
+          done
 
-          # Move to app directory
-          mv ${MODEL_NAME}.mlpackage ios/BenchmarkApp/
-          echo "Model moved to ios/BenchmarkApp/"
-
-      - name: Verify model in app directory
+      - name: Verify models in app directory
         run: |
           echo "Contents of ios/BenchmarkApp/:"
           ls -la ios/BenchmarkApp/
-          if [ -d "ios/BenchmarkApp/${MODEL_NAME}.mlpackage" ]; then
-            echo "Model ${MODEL_NAME}.mlpackage found!"
-            du -sh ios/BenchmarkApp/${MODEL_NAME}.mlpackage
-          else
-            echo "WARNING: Model not found in app directory"
-          fi
+          echo ""
+          echo "Bundled models:"
+          for pkg in ios/BenchmarkApp/*.mlpackage; do
+            if [ -d "$pkg" ]; then
+              du -sh "$pkg"
+            fi
+          done
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Configure project for selected model
+      - name: Configure project for selected models
         working-directory: ios/BenchmarkApp
         run: |
-          # Remove model entries that don't match the selected model
+          # Remove model entries that aren't being bundled
           # This prevents Xcode from trying to copy non-existent models
-          if [ "$MODEL_NAME" = "yolov8n" ]; then
-            # Remove yolov8s entry (4 lines: path, optional, buildPhase, type)
-            sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
-          elif [ "$MODEL_NAME" = "yolov8s" ]; then
-            # Remove yolov8n entry
-            sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
-          elif [ "$MODEL_NAME" = "none" ]; then
-            # Remove both model entries
+          if [ "$MODELS" = "none" ]; then
             sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
             sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
+          else
+            # Remove entries for models not in the list
+            if [[ ! "$MODELS" =~ "yolov8n" ]]; then
+              sed -i '' '/- path: yolov8n.mlpackage/,/type: folder/d' project.yml
+            fi
+            if [[ ! "$MODELS" =~ "yolov8s" ]]; then
+              sed -i '' '/- path: yolov8s.mlpackage/,/type: folder/d' project.yml
+            fi
           fi
           echo "Updated project.yml sources:"
-          grep -A 20 "sources:" project.yml | head -25
+          grep -A 25 "sources:" project.yml | head -30
 
       - name: Generate Xcode Project
         working-directory: ios/BenchmarkApp
@@ -100,19 +111,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Verify model in app bundle
+      - name: Verify models in app bundle
         working-directory: ios/BenchmarkApp
         run: |
           echo "Contents of built app:"
           ls -la build/Build/Products/Release-iphoneos/BenchmarkApp.app/
-          if [ -d "build/Build/Products/Release-iphoneos/BenchmarkApp.app/${MODEL_NAME}.mlmodelc" ]; then
-            echo "Compiled model found in app bundle!"
-            du -sh build/Build/Products/Release-iphoneos/BenchmarkApp.app/${MODEL_NAME}.mlmodelc
-          else
-            echo "WARNING: Compiled model NOT found in app bundle"
-            echo "Looking for any .mlmodelc files:"
-            find build/Build/Products/Release-iphoneos/BenchmarkApp.app -name "*.mlmodelc" -o -name "*.mlpackage" 2>/dev/null || echo "None found"
-          fi
+          echo ""
+          echo "Compiled models in bundle:"
+          find build/Build/Products/Release-iphoneos/BenchmarkApp.app -name "*.mlmodelc" -exec du -sh {} \; 2>/dev/null || echo "None found"
 
       - name: Create IPA
         working-directory: ios/BenchmarkApp

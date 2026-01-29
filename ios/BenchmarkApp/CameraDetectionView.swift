@@ -77,6 +77,20 @@ struct CameraDetectionView: View {
                                 .padding(.horizontal)
                         }
 
+                        // Confidence threshold slider
+                        HStack(spacing: 8) {
+                            Text("Conf")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                            Slider(value: $camera.confidenceThreshold, in: 0.1...0.95, step: 0.05)
+                                .tint(.blue)
+                            Text(String(format: "%.0f%%", camera.confidenceThreshold * 100))
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white)
+                                .frame(width: 36)
+                        }
+                        .padding(.horizontal, 16)
+
                         HStack(spacing: 12) {
                             Button(action: { showModelPicker = true }) {
                                 Label(selectedModel.isEmpty ? "Select Model" : selectedModel,

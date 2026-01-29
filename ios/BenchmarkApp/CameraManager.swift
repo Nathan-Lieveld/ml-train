@@ -9,6 +9,7 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isDetecting = false
     @Published var permissionGranted = false
     @Published var debugLog: [String] = []
+    @Published var confidenceThreshold: Float = 0.6
 
     private let maxLogLines = 50
 
@@ -221,13 +222,15 @@ class CameraManager: NSObject, ObservableObject {
 
         var newDetections: [Detection] = []
 
+        let threshold = confidenceThreshold
+
         // Handle different result types
         if let observations = results as? [VNRecognizedObjectObservation] {
             // Standard object detection (NMS built into model)
             if shouldLog {
-                log("Output: VNRecognizedObjectObservation x\(observations.count)")
+                log("Output: VNRecognizedObjectObservation x\(observations.count), threshold: \(threshold)")
             }
-            for observation in observations where observation.confidence > 0.5 {
+            for observation in observations where observation.confidence > threshold {
                 if let topLabel = observation.labels.first {
                     let colorIndex = abs(topLabel.identifier.hashValue) % Detection.colors.count
                     newDetections.append(Detection(
@@ -277,7 +280,7 @@ class CameraManager: NSObject, ObservableObject {
         }
 
         var detections: [Detection] = []
-        let confidenceThreshold: Float = 0.5
+        let threshold = confidenceThreshold
         let shape = multiArray.shape.map { $0.intValue }
 
         // Handle different output shapes
@@ -297,7 +300,7 @@ class CameraManager: NSObject, ObservableObject {
                     }
                 }
 
-                guard maxScore > confidenceThreshold else { continue }
+                guard maxScore > threshold else { continue }
 
                 // Get bounding box (center x, center y, width, height)
                 let cx = multiArray[[0, i, 0] as [NSNumber]].floatValue / 640.0
