@@ -14,10 +14,16 @@ targets:
           - project.yml
           - "*.entitlements"
           - Info.plist
+          - "*.mlpackage"
+    resources:
+      - path: .
+        includes:
+          - "*.mlpackage"
     info:
       path: Info.plist
       properties:
         CFBundleDisplayName: ML Benchmark
+        NSCameraUsageDescription: Camera access is required for real-time object detection.
         NSLocalNetworkUsageDescription: This app runs a local server to receive benchmark requests from your computer.
         NSBonjourServices:
           - _http._tcp

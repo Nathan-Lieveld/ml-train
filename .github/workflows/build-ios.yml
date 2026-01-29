@@ -6,6 +6,11 @@ on:
       - 'ios/**'
       - '.github/workflows/build-ios.yml'
   workflow_dispatch:
+    inputs:
+      model:
+        description: 'Model to bundle (yolov8n, yolov8s, or none)'
+        required: false
+        default: 'yolov8n'
 
 jobs:
   build:
@@ -14,6 +19,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Export YOLOv8n to CoreML
+        if: ${{ github.event.inputs.model != 'none' }}
+        run: |
+          MODEL="${{ github.event.inputs.model || 'yolov8n' }}"
+          echo "Exporting ${MODEL} to CoreML..."
+          uv run python -c "
+          from ultralytics import YOLO
+          model = YOLO('${MODEL}.pt')
+          model.export(format='coreml', imgsz=640, half=True, nms=True)
+          "
+          # Move to app directory
+          mv ${MODEL}.mlpackage ios/BenchmarkApp/
 
       - name: Install XcodeGen
         run: brew install xcodegen
