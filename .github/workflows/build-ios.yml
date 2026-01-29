@@ -1,0 +1,50 @@
+name: Build iOS App
+
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        working-directory: ios/BenchmarkApp
+        run: xcodegen generate
+
+      - name: Build App
+        working-directory: ios/BenchmarkApp
+        run: |
+          xcodebuild -project BenchmarkApp.xcodeproj \
+            -scheme BenchmarkApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Create IPA
+        working-directory: ios/BenchmarkApp
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/BenchmarkApp.app Payload/
+          zip -r BenchmarkApp-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BenchmarkApp-unsigned
+          path: ios/BenchmarkApp/BenchmarkApp-unsigned.ipa

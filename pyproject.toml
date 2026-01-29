@@ -8,14 +8,19 @@ dependencies = [
     "torchvision>=0.25.0",
     "numpy>=2.4.0",
     "onnx>=1.20.0",
+    "tqdm>=4.67.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.0", "ruff>=0.14.0"]
+ios = ["coremltools>=8.0"]
 
 [project.scripts]
 train = "src.train:main"
 export = "src.export:main"
+export-coreml = "src.coreml_export:main"
+build-lut = "src.latency:main"
+nas-search = "src.nas:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -29,3 +34,4 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
