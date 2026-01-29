@@ -3,7 +3,6 @@ import Vision
 import CoreML
 import Combine
 
-@MainActor
 class CameraManager: NSObject, ObservableObject {
     @Published var detections: [Detection] = []
     @Published var fps: Double = 0
@@ -11,9 +10,16 @@ class CameraManager: NSObject, ObservableObject {
     @Published var permissionGranted = false
 
     let session = AVCaptureSession()
-    private var detectionRequest: VNCoreMLRequest?
     private var videoOutput: AVCaptureVideoDataOutput?
     private let processingQueue = DispatchQueue(label: "com.mltrain.camera", qos: .userInitiated)
+
+    // Thread-safe request storage (accessed from processingQueue)
+    private let requestLock = NSLock()
+    private var _detectionRequest: VNCoreMLRequest?
+    private var currentRequest: VNCoreMLRequest? {
+        get { requestLock.withLock { _detectionRequest } }
+        set { requestLock.withLock { _detectionRequest = newValue } }
+    }
 
     // FPS tracking
     private var frameCount = 0
@@ -44,7 +50,7 @@ class CameraManager: NSObject, ObservableObject {
             setupCamera()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                Task { @MainActor in
+                DispatchQueue.main.async {
                     self?.permissionGranted = granted
                     if granted {
                         self?.setupCamera()
@@ -83,8 +89,9 @@ class CameraManager: NSObject, ObservableObject {
             videoOutput = output
 
             if let connection = output.connection(with: .video) {
-                if connection.isVideoRotationAngleSupported(90) {
-                    connection.videoRotationAngle = 90
+                // Use deprecated API for iOS 16 compatibility
+                if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = .portrait
                 }
             }
         }
@@ -131,16 +138,19 @@ class CameraManager: NSObject, ObservableObject {
         }
         request.imageCropAndScaleOption = .scaleFill
 
+        currentRequest = request
+
         await MainActor.run {
-            self.detectionRequest = request
             self.isDetecting = true
         }
     }
 
     func stopDetection() {
-        detectionRequest = nil
-        isDetecting = false
-        detections = []
+        currentRequest = nil
+        DispatchQueue.main.async {
+            self.isDetecting = false
+            self.detections = []
+        }
     }
 
     private func processDetections(request: VNRequest) {
@@ -167,9 +177,9 @@ class CameraManager: NSObject, ObservableObject {
             newDetections = parseYOLOOutput(observations)
         }
 
-        Task { @MainActor in
-            self.detections = newDetections
-            self.updateFPS()
+        DispatchQueue.main.async { [weak self] in
+            self?.detections = newDetections
+            self?.updateFPS()
         }
     }
 
@@ -277,10 +287,10 @@ class CameraManager: NSObject, ObservableObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
-    nonisolated func captureOutput(_ output: AVCaptureOutput,
-                                   didOutput sampleBuffer: CMSampleBuffer,
-                                   from connection: AVCaptureConnection) {
-        guard let request = detectionRequest,
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard let request = currentRequest,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
