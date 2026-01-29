@@ -37,13 +37,14 @@ jobs:
           python -m pip install "ultralytics>=8.3.0" "coremltools>=8.0,<9.0" "numpy<2.0"
           echo "ULTRALYTICS_VERSION=$(pip show ultralytics | grep '^Version:' | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "COREMLTOOLS_VERSION=$(pip show coremltools | grep '^Version:' | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "MODELS_HASH=$(echo "$MODELS" | shasum -a 256 | cut -d' ' -f1 | head -c 12)" >> $GITHUB_ENV
 
       - name: Cache model weights (.pt)
         if: ${{ env.MODELS != 'none' }}
         uses: actions/cache@v4
         with:
           path: model-weights
-          key: weights-${{ env.CACHE_VERSION }}-${{ env.MODELS }}-ul${{ env.ULTRALYTICS_VERSION }}
+          key: weights-${{ env.CACHE_VERSION }}-${{ env.MODELS_HASH }}-ul${{ env.ULTRALYTICS_VERSION }}
           restore-keys: |
             weights-${{ env.CACHE_VERSION }}-
 
@@ -52,7 +53,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: model-exports
-          key: coreml-${{ env.CACHE_VERSION }}-${{ env.MODELS }}-ul${{ env.ULTRALYTICS_VERSION }}-ct${{ env.COREMLTOOLS_VERSION }}
+          key: coreml-${{ env.CACHE_VERSION }}-${{ env.MODELS_HASH }}-ul${{ env.ULTRALYTICS_VERSION }}-ct${{ env.COREMLTOOLS_VERSION }}
           restore-keys: |
             coreml-${{ env.CACHE_VERSION }}-
 
