@@ -11,61 +11,93 @@ struct CameraDetectionView: View {
     @State private var hasAutoLoaded = false
 
     var body: some View {
-        ZStack {
-            CameraPreviewView(session: camera.session)
-                .ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                // Camera preview - full screen
+                CameraPreviewView(session: camera.session)
+                    .ignoresSafeArea()
 
-            // Bounding boxes overlay
-            DetectionOverlay(detections: camera.detections)
+                // Bounding boxes overlay
+                DetectionOverlay(detections: camera.detections)
+                    .ignoresSafeArea()
 
-            // UI overlay
-            VStack {
-                // Top bar with FPS
-                HStack {
-                    Spacer()
-                    FPSBadge(fps: camera.fps)
-                        .padding()
-                }
-
-                Spacer()
-
-                // Bottom controls
-                VStack(spacing: 12) {
-                    if let error = errorMessage {
-                        Text(error)
-                            .foregroundColor(.white)
-                            .padding(8)
-                            .background(Color.red.opacity(0.8))
-                            .cornerRadius(8)
-                    }
-
+                // UI overlay
+                VStack(spacing: 0) {
+                    // Top bar with FPS and status
                     HStack {
-                        Button(action: { showModelPicker = true }) {
-                            Label(selectedModel.isEmpty ? "Select Model" : selectedModel,
-                                  systemImage: "cube.box")
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(Color.blue)
+                        // Status indicator
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(camera.permissionGranted ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(camera.isDetecting ? "Detecting" : "Camera")
+                                .font(.caption)
                                 .foregroundColor(.white)
-                                .cornerRadius(10)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.6))
+                        .cornerRadius(12)
+
+                        Spacer()
+
+                        FPSBadge(fps: camera.fps)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, geometry.safeAreaInsets.top + 8)
+
+                    Spacer()
+
+                    // Bottom controls
+                    VStack(spacing: 8) {
+                        if let error = errorMessage {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(8)
+                                .background(Color.red.opacity(0.8))
+                                .cornerRadius(8)
+                                .padding(.horizontal)
                         }
 
-                        if camera.isDetecting {
-                            Button(action: { camera.stopDetection() }) {
-                                Label("Stop", systemImage: "stop.fill")
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
-                                    .background(Color.red)
+                        HStack(spacing: 12) {
+                            Button(action: { showModelPicker = true }) {
+                                Label(selectedModel.isEmpty ? "Select Model" : selectedModel,
+                                      systemImage: "cube.box")
+                                    .font(.subheadline)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue)
                                     .foregroundColor(.white)
-                                    .cornerRadius(10)
+                                    .cornerRadius(8)
+                            }
+
+                            if camera.isDetecting {
+                                Button(action: { camera.stopDetection() }) {
+                                    Label("Stop", systemImage: "stop.fill")
+                                        .font(.subheadline)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(Color.red)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                }
                             }
                         }
                     }
+                    .padding()
+                    .padding(.bottom, 60) // Space for tab bar
+                    .background(
+                        LinearGradient(
+                            colors: [Color.black.opacity(0), Color.black.opacity(0.7)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
                 }
-                .padding()
-                .background(Color.black.opacity(0.5))
             }
         }
+        .ignoresSafeArea()
         .sheet(isPresented: $showModelPicker) {
             ModelPickerView(selectedModel: $selectedModel) { modelPath in
                 loadModel(path: modelPath)
@@ -73,7 +105,10 @@ struct CameraDetectionView: View {
         }
         .onAppear {
             camera.checkPermissions()
-            autoLoadBundledModel()
+            // Delay auto-load to let camera initialize
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                autoLoadBundledModel()
+            }
         }
     }
 
@@ -94,12 +129,10 @@ struct CameraDetectionView: View {
     }
 
     private func loadModel(path: String) {
+        errorMessage = nil
         Task {
             do {
                 try await camera.loadModel(path: path)
-                await MainActor.run {
-                    errorMessage = nil
-                }
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -114,25 +147,26 @@ struct CameraDetectionView: View {
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
-        let previewLayer = AVCaptureVideoPreviewLayer(session: session)
-        previewLayer.videoGravity = .resizeAspectFill
-        view.layer.addSublayer(previewLayer)
-        context.coordinator.previewLayer = previewLayer
+    func makeUIView(context: Context) -> PreviewView {
+        let view = PreviewView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        view.backgroundColor = .black
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.previewLayer?.frame = uiView.bounds
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        // Layout is handled by PreviewView
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
+    class PreviewView: UIView {
+        override class var layerClass: AnyClass {
+            AVCaptureVideoPreviewLayer.self
+        }
 
-    class Coordinator {
-        var previewLayer: AVCaptureVideoPreviewLayer?
+        var previewLayer: AVCaptureVideoPreviewLayer {
+            layer as! AVCaptureVideoPreviewLayer
+        }
     }
 }
 
@@ -151,12 +185,12 @@ struct DetectionOverlay: View {
                         .frame(width: rect.width, height: rect.height)
 
                     Text("\(detection.label) \(Int(detection.confidence * 100))%")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.white)
-                        .padding(4)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
                         .background(detection.color)
-                        .offset(y: -20)
+                        .offset(y: -16)
                 }
                 .position(x: rect.midX, y: rect.midY)
             }
@@ -176,14 +210,14 @@ struct FPSBadge: View {
     }
 
     var body: some View {
-        Text(String(format: "%.1f FPS", fps))
-            .font(.system(.body, design: .monospaced))
-            .fontWeight(.bold)
+        Text(String(format: "%.0f", fps))
+            .font(.system(size: 14, weight: .bold, design: .monospaced))
             .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .frame(minWidth: 32)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
             .background(color.opacity(0.8))
-            .cornerRadius(8)
+            .cornerRadius(6)
     }
 }
 
@@ -196,6 +230,7 @@ struct ModelPickerView: View {
 
     @State private var customPath: String = ""
     @State private var bundledModels: [String] = []
+    @State private var allBundleFiles: [String] = []
 
     var body: some View {
         NavigationView {
@@ -220,19 +255,39 @@ struct ModelPickerView: View {
                     }
 
                     if bundledModels.isEmpty {
-                        Text("No bundled models found")
-                            .foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("No bundled models found")
+                                .foregroundColor(.secondary)
+                            Text("Build with model or load custom path")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
 
                 Section("Custom Path") {
-                    TextField("Model path", text: $customPath)
-                    Button("Load Custom Model") {
+                    TextField("Model name or path", text: $customPath)
+                        .autocapitalization(.none)
+                    Button("Load Model") {
                         selectedModel = customPath
                         onSelect(customPath)
                         dismiss()
                     }
                     .disabled(customPath.isEmpty)
+                }
+
+                // Debug section
+                Section("Bundle Contents (Debug)") {
+                    ForEach(allBundleFiles.prefix(20), id: \.self) { file in
+                        Text(file)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    if allBundleFiles.count > 20 {
+                        Text("... and \(allBundleFiles.count - 20) more")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .navigationTitle("Select Model")
@@ -250,9 +305,12 @@ struct ModelPickerView: View {
 
     private func findBundledModels() {
         var models: [String] = []
+        var allFiles: [String] = []
+
         if let resourcePath = Bundle.main.resourcePath {
             let fm = FileManager.default
             if let contents = try? fm.contentsOfDirectory(atPath: resourcePath) {
+                allFiles = contents.sorted()
                 for item in contents {
                     if item.hasSuffix(".mlmodelc") || item.hasSuffix(".mlpackage") {
                         let name = (item as NSString).deletingPathExtension
@@ -261,7 +319,9 @@ struct ModelPickerView: View {
                 }
             }
         }
+
         bundledModels = models
+        allBundleFiles = allFiles
     }
 }
 
