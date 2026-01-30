@@ -19,6 +19,8 @@ def train_model(
     project: str = "runs/detect",
     name: str | None = None,
     freeze: int | None = None,
+    device: str = "0",
+    workers: int = 8,
 ) -> Path:
     """Fine-tune a YOLO model on a dataset.
 
@@ -31,6 +33,8 @@ def train_model(
         project: Output project directory
         name: Experiment name (defaults to model stem + dataset stem)
         freeze: Number of backbone layers to freeze (None = train all)
+        device: CUDA device (e.g. '0', '0,1', 'cpu')
+        workers: Number of dataloader workers (0 recommended on Windows)
 
     Returns:
         Path to best checkpoint
@@ -49,8 +53,9 @@ def train_model(
         batch=batch,
         project=project,
         name=name,
-        device="0",
-        workers=4,
+        device=device,
+        workers=workers,
+        cache=False,
         patience=20,
         save=True,
         plots=True,
@@ -217,6 +222,10 @@ def main():
     train_parser.add_argument("--name", type=str, default=None)
     train_parser.add_argument("--freeze", type=int, default=None,
                               help="Number of backbone layers to freeze")
+    train_parser.add_argument("--device", type=str, default="0",
+                              help="CUDA device (default: '0', use 'cpu' for CPU)")
+    train_parser.add_argument("--workers", type=int, default=8,
+                              help="Dataloader workers (use 0 on Windows)")
 
     # Export command
     export_parser = subparsers.add_parser("export", help="Export model")
@@ -252,6 +261,8 @@ def main():
             batch=args.batch,
             name=args.name,
             freeze=args.freeze,
+            device=args.device,
+            workers=args.workers,
         )
     elif args.command == "export":
         export_model(
