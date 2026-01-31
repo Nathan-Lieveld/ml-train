@@ -4,10 +4,14 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import platform
 import urllib.request
 from pathlib import Path
 
 from ultralytics import YOLO
+
+_IS_WINDOWS = platform.system() == "Windows"
+_DEFAULT_WORKERS = 0 if _IS_WINDOWS else 4
 
 
 def train_model(
@@ -20,7 +24,10 @@ def train_model(
     name: str | None = None,
     freeze: int | None = None,
     device: str = "0",
-    workers: int = 8,
+    workers: int = _DEFAULT_WORKERS,
+    cache: str | bool = "disk",
+    deterministic: bool = False,
+    resume: str | None = None,
 ) -> Path:
     """Fine-tune a YOLO model on a dataset.
 
@@ -34,36 +41,44 @@ def train_model(
         name: Experiment name (defaults to model stem + dataset stem)
         freeze: Number of backbone layers to freeze (None = train all)
         device: CUDA device (e.g. '0', '0,1', 'cpu')
-        workers: Number of dataloader workers (0 recommended on Windows)
+        workers: Number of dataloader workers (auto: 0 on Windows, 4 on Linux)
+        cache: Cache mode - 'disk' (save decoded .npy), True/'ram' (in-memory), or False
+        deterministic: Use deterministic algorithms (slower but reproducible)
+        resume: Path to last.pt checkpoint to resume training from
 
     Returns:
         Path to best checkpoint
     """
-    if name is None:
-        model_stem = Path(model_name).stem
-        data_stem = Path(data_yaml).stem
-        name = f"{model_stem}_{data_stem}"
+    if resume:
+        model = YOLO(resume)
+        model.train(resume=True)
+    else:
+        if name is None:
+            model_stem = Path(model_name).stem
+            data_stem = Path(data_yaml).stem
+            name = f"{model_stem}_{data_stem}"
 
-    model = YOLO(model_name)
+        model = YOLO(model_name)
 
-    train_kwargs = dict(
-        data=data_yaml,
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        project=project,
-        name=name,
-        device=device,
-        workers=workers,
-        cache=False,
-        patience=20,
-        save=True,
-        plots=True,
-    )
-    if freeze is not None:
-        train_kwargs["freeze"] = freeze
+        train_kwargs = dict(
+            data=data_yaml,
+            epochs=epochs,
+            imgsz=imgsz,
+            batch=batch,
+            project=project,
+            name=name,
+            device=device,
+            workers=workers,
+            cache=cache,
+            deterministic=deterministic,
+            patience=20,
+            save=True,
+            plots=True,
+        )
+        if freeze is not None:
+            train_kwargs["freeze"] = freeze
 
-    model.train(**train_kwargs)
+        model.train(**train_kwargs)
 
     best_path = Path(project) / name / "weights" / "best.pt"
     print(f"Training complete. Best model: {best_path}")
@@ -224,8 +239,14 @@ def main():
                               help="Number of backbone layers to freeze")
     train_parser.add_argument("--device", type=str, default="0",
                               help="CUDA device (default: '0', use 'cpu' for CPU)")
-    train_parser.add_argument("--workers", type=int, default=8,
-                              help="Dataloader workers (use 0 on Windows)")
+    train_parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS,
+                              help=f"Dataloader workers (default: {_DEFAULT_WORKERS})")
+    train_parser.add_argument("--cache", type=str, default="disk",
+                              help="Cache mode: 'disk', 'ram', or 'false' (default: disk)")
+    train_parser.add_argument("--deterministic", action="store_true",
+                              help="Use deterministic algorithms (slower)")
+    train_parser.add_argument("--resume", type=str, default=None,
+                              help="Path to last.pt checkpoint to resume training")
 
     # Export command
     export_parser = subparsers.add_parser("export", help="Export model")
@@ -253,6 +274,12 @@ def main():
     args = parser.parse_args()
 
     if args.command == "train":
+        cache_val: str | bool = args.cache
+        if cache_val.lower() == "false":
+            cache_val = False
+        elif cache_val.lower() in ("true", "ram"):
+            cache_val = True
+
         train_model(
             model_name=args.model,
             data_yaml=args.data,
@@ -263,6 +290,9 @@ def main():
             freeze=args.freeze,
             device=args.device,
             workers=args.workers,
+            cache=cache_val,
+            deterministic=args.deterministic,
+            resume=args.resume,
         )
     elif args.command == "export":
         export_model(

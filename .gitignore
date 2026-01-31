@@ -16,6 +16,12 @@ exported/
 *.csv
 logs/
 
+# Training runs
+runs/
+
+# Windows artifacts
+nul
+
 # IDE
 .vscode/
 .idea/
