@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=9.0.0", "ruff>=0.14.0"]
 ios = ["coremltools>=8.0"]
+int8 = ["onnxruntime>=1.22.0; python_version < '3.14'"]
 
 [project.scripts]
 train = "src.train:main"

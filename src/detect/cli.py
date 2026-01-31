@@ -54,6 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--format", type=str, default="onnx", choices=EXPORT_FORMATS)
     p_export.add_argument("--imgsz", type=int, default=640)
     p_export.add_argument("--output", type=str, default="./exported")
+    p_export.add_argument("--int8", action="store_true", help="Post-training INT8 quantization (ONNX only)")
 
     return parser
 
@@ -171,6 +172,13 @@ def _cmd_export(args: argparse.Namespace) -> None:
         )
         onnx.checker.check_model(str(out_path))
         logger.info("Exported ONNX: %s", out_path)
+
+        if args.int8:
+            from onnxruntime.quantization import QuantType, quantize_dynamic
+
+            int8_path = output_dir / "model_int8.onnx"
+            quantize_dynamic(str(out_path), str(int8_path), weight_type=QuantType.QInt8)
+            logger.info("Exported INT8 ONNX: %s", int8_path)
     elif args.format == "torchscript":
         out_path = output_dir / "model.torchscript"
         traced = torch.jit.trace(model, dummy)
