@@ -9,12 +9,15 @@ dependencies = [
     "numpy>=2.4.0",
     "onnx>=1.20.0",
     "tqdm>=4.67.0",
-    "ultralytics>=8.3.0",
+    "polars>=1.0",
+    "opencv-python>=4.10.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.0", "ruff>=0.14.0"]
 ios = ["coremltools>=8.0"]
+int8 = ["onnxruntime>=1.22.0; python_version < '3.14'"]
 
 [project.scripts]
 train = "src.train:main"
@@ -23,6 +26,7 @@ export-coreml = "src.coreml_export:main"
 build-lut = "src.latency:main"
 nas-search = "src.nas:main"
 baseline = "src.baseline_detection:main"
+detect = "src.detect.cli:main"
 
 [build-system]
 requires = ["hatchling"]
