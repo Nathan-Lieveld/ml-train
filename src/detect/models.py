@@ -384,6 +384,7 @@ class Detect(nn.Module):
         ch: tuple[int, ...] = (),
         reg_max: int = 16,
         end2end: bool = False,
+        dw_cv3: bool = False,
     ) -> None:
         super().__init__()
         self.nc = nc
@@ -393,17 +394,27 @@ class Detect(nn.Module):
         self.end2end = end2end
         self.stride = torch.zeros(self.nl)
 
-        c2 = max(ch[0] if ch else MIN_DETECT_CHANNELS, self.reg_max * 4, MIN_DETECT_CHANNELS)
-        c3 = max(ch[0] if ch else MIN_DETECT_CHANNELS, self.nc, MIN_DETECT_CHANNELS)
+        c2 = max(ch[0] // 4 if ch else MIN_DETECT_CHANNELS, self.reg_max * 4, MIN_DETECT_CHANNELS)
+        c3 = max(ch[0] if ch else MIN_DETECT_CHANNELS, min(self.nc, 100), MIN_DETECT_CHANNELS)
 
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1))
             for x in ch
         )
-        self.cv3 = nn.ModuleList(
-            nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1))
-            for x in ch
-        )
+        if dw_cv3:
+            self.cv3 = nn.ModuleList(
+                nn.Sequential(
+                    DWConv(x, x, 3), Conv(x, c3, 1),
+                    DWConv(c3, c3, 3), Conv(c3, c3, 1),
+                    nn.Conv2d(c3, self.nc, 1),
+                )
+                for x in ch
+            )
+        else:
+            self.cv3 = nn.ModuleList(
+                nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1))
+                for x in ch
+            )
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
     def forward(self, x: list[torch.Tensor]) -> torch.Tensor | list[torch.Tensor]:
@@ -562,10 +573,10 @@ def yolo11s(nc: int = 80) -> DetectionModel:
     # Backbone
     model.b0 = Conv(3, 32, 3, 2)
     model.b1 = Conv(32, 64, 3, 2)
-    model.b2 = C3k2(64, 64, n=1, c3k=False)
-    model.b3 = Conv(64, 128, 3, 2)
-    model.b4 = C3k2(128, 128, n=1, c3k=False)
-    model.b5 = Conv(128, 256, 3, 2)
+    model.b2 = C3k2(64, 128, n=1, c3k=False, e=0.25)
+    model.b3 = Conv(128, 128, 3, 2)
+    model.b4 = C3k2(128, 256, n=1, c3k=False, e=0.25)
+    model.b5 = Conv(256, 256, 3, 2)
     model.b6 = C3k2(256, 256, n=1, c3k=True)
     model.b7 = Conv(256, 512, 3, 2)
     model.b8 = C3k2(512, 512, n=1, c3k=True)
@@ -574,7 +585,7 @@ def yolo11s(nc: int = 80) -> DetectionModel:
 
     # Neck — FPN
     model.n1 = C3k2(512 + 256, 256, n=1, c3k=False)
-    model.n2 = C3k2(256 + 128, 128, n=1, c3k=False)
+    model.n2 = C3k2(256 + 256, 128, n=1, c3k=False)
     # Neck — PAN
     model.n3 = Conv(128, 128, 3, 2)
     model.n4 = C3k2(128 + 256, 256, n=1, c3k=False)
@@ -582,7 +593,7 @@ def yolo11s(nc: int = 80) -> DetectionModel:
     model.n6 = C3k2(256 + 512, 512, n=1, c3k=True)
 
     # Detect
-    model.detect = Detect(nc, ch=(128, 256, 512))
+    model.detect = Detect(nc, ch=(128, 256, 512), dw_cv3=True)
     model._ultralytics_key_map = _YOLO11S_KEY_MAP
     _set_strides(model)
     return model
@@ -595,10 +606,10 @@ def yolo26s(nc: int = 80) -> DetectionModel:
     # Backbone (same as yolo11s)
     model.b0 = Conv(3, 32, 3, 2)
     model.b1 = Conv(32, 64, 3, 2)
-    model.b2 = C3k2(64, 64, n=1, c3k=False)
-    model.b3 = Conv(64, 128, 3, 2)
-    model.b4 = C3k2(128, 128, n=1, c3k=False)
-    model.b5 = Conv(128, 256, 3, 2)
+    model.b2 = C3k2(64, 128, n=1, c3k=False, e=0.25)
+    model.b3 = Conv(128, 128, 3, 2)
+    model.b4 = C3k2(128, 256, n=1, c3k=False, e=0.25)
+    model.b5 = Conv(256, 256, 3, 2)
     model.b6 = C3k2(256, 256, n=1, c3k=True)
     model.b7 = Conv(256, 512, 3, 2)
     model.b8 = C3k2(512, 512, n=1, c3k=True)
@@ -607,7 +618,7 @@ def yolo26s(nc: int = 80) -> DetectionModel:
 
     # Neck — FPN
     model.n1 = C3k2(512 + 256, 256, n=1, c3k=False)
-    model.n2 = C3k2(256 + 128, 128, n=1, c3k=False)
+    model.n2 = C3k2(256 + 256, 128, n=1, c3k=False)
     # Neck — PAN
     model.n3 = Conv(128, 128, 3, 2)
     model.n4 = C3k2(128 + 256, 256, n=1, c3k=False)
@@ -615,7 +626,7 @@ def yolo26s(nc: int = 80) -> DetectionModel:
     model.n6 = C3k2(256 + 512, 512, n=1, c3k=True)
 
     # Detect with reg_max=1 (direct regression) and end2end (NMS-free)
-    model.detect = Detect(nc, ch=(128, 256, 512), reg_max=1, end2end=True)
+    model.detect = Detect(nc, ch=(128, 256, 512), reg_max=1, end2end=True, dw_cv3=True)
     model._ultralytics_key_map = _YOLO26S_KEY_MAP
     _set_strides(model)
     return model
@@ -681,6 +692,16 @@ def load_ultralytics_weights(
 
     if unmapped:
         logger.warning("Unmapped keys during weight loading: %s", unmapped[:20])
+
+    # Filter out shape mismatches (e.g. different channel widths, nc, reg_max)
+    model_sd = model.state_dict()
+    skipped: list[str] = []
+    for key in list(mapped_sd):
+        if key in model_sd and mapped_sd[key].shape != model_sd[key].shape:
+            skipped.append(key)
+            del mapped_sd[key]
+    if skipped:
+        logger.warning("Skipped %d keys with shape mismatch: %s", len(skipped), skipped[:20])
 
     missing, unexpected = model.load_state_dict(mapped_sd, strict=False)
     if missing:
