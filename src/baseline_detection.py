@@ -4,13 +4,13 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import platform
+import sys
 import urllib.request
 from pathlib import Path
 
 from ultralytics import YOLO
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = sys.platform == "win32"
 _DEFAULT_WORKERS = 0 if _IS_WINDOWS else 4
 
 
