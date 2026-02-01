@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from src.detect.models import bbox2dist, dist2bbox, make_anchors
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # IoU computation

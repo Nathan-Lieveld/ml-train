@@ -12,7 +12,6 @@ Categories 0 (ignored regions) and 11 (others) are skipped.
 
 from __future__ import annotations
 
-import io
 import shutil
 import zipfile
 from pathlib import Path
