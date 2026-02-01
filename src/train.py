@@ -1,5 +1,6 @@
 """Training script."""
 import argparse
+import sys
 from pathlib import Path
 
 import torch
@@ -9,12 +10,19 @@ from torchvision import datasets, transforms
 
 from .models import TinyConvNet
 
+CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
+CIFAR10_STD = (0.2470, 0.2435, 0.2616)
 
-def get_dataloaders(batch_size: int):
+_DEFAULT_WORKERS = 0 if sys.platform == "win32" else 4
+
+
+def get_dataloaders(
+    batch_size: int,
+) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     """Get CIFAR-10 train and validation dataloaders."""
     normalize = transforms.Normalize(
-        mean=[0.4914, 0.4822, 0.4465],
-        std=[0.2470, 0.2435, 0.2616],
+        mean=CIFAR10_MEAN,
+        std=CIFAR10_STD,
     )
 
     train_transform = transforms.Compose([
@@ -36,16 +44,22 @@ def get_dataloaders(batch_size: int):
     )
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=_DEFAULT_WORKERS
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=2
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=_DEFAULT_WORKERS
     )
 
     return train_loader, val_loader
 
 
-def train_epoch(model, loader, optimizer, criterion, device):
+def train_epoch(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    optimizer: optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+) -> tuple[float, float]:
     """Train for one epoch. Returns average loss and accuracy."""
     model.train()
     total_loss = 0.0
@@ -70,7 +84,12 @@ def train_epoch(model, loader, optimizer, criterion, device):
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device):
+def validate(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> tuple[float, float]:
     """Validate model. Returns average loss and accuracy."""
     model.eval()
     total_loss = 0.0
@@ -91,7 +110,7 @@ def validate(model, loader, criterion, device):
     return total_loss / total, correct / total
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Train model")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=0.001)

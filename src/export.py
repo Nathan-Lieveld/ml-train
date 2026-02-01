@@ -7,7 +7,7 @@ import torch
 from .models import TinyConvNet
 
 
-def load_model_from_checkpoint(path: str, device: torch.device):
+def load_model_from_checkpoint(path: str, device: torch.device) -> TinyConvNet:
     """Load model from checkpoint and return in eval mode."""
     checkpoint = torch.load(path, map_location=device, weights_only=True)
     model = TinyConvNet()
@@ -17,7 +17,7 @@ def load_model_from_checkpoint(path: str, device: torch.device):
     return model
 
 
-def export_onnx(model, output_path: str):
+def export_onnx(model: torch.nn.Module, output_path: str) -> None:
     """Export model to ONNX format with dynamic batch axis."""
     dummy_input = torch.randn(1, 3, 32, 32)
     torch.onnx.export(
@@ -32,7 +32,7 @@ def export_onnx(model, output_path: str):
     print(f"Exported ONNX model to {output_path}")
 
 
-def export_torchscript(model, output_path: str):
+def export_torchscript(model: torch.nn.Module, output_path: str) -> None:
     """Export model to TorchScript via tracing."""
     dummy_input = torch.randn(1, 3, 32, 32)
     traced = torch.jit.trace(model, dummy_input)
@@ -40,7 +40,7 @@ def export_torchscript(model, output_path: str):
     print(f"Exported TorchScript model to {output_path}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Export model")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--format", choices=["onnx", "torchscript", "both"], default="onnx")

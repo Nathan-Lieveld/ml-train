@@ -321,10 +321,14 @@ def estimate_network_latency(
 
 
 def generate_lut_configs(
-    base_channels_list: list[int] = [16, 24, 32],
-    input_sizes: list[int] = [32, 16, 8],
+    base_channels_list: list[int] | None = None,
+    input_sizes: list[int] | None = None,
 ) -> list[OpConfig]:
     """Generate all operation configs needed for LUT."""
+    if base_channels_list is None:
+        base_channels_list = [16, 24, 32]
+    if input_sizes is None:
+        input_sizes = [32, 16, 8]
     configs = []
 
     # Stem configs
@@ -387,7 +391,7 @@ def build_lut(
         try:
             table = LatencyTable.load(output_path)
             print(f"Loaded existing LUT with {len(table)} entries")
-        except Exception as e:
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as e:
             print(f"Could not load existing LUT: {e}")
 
     # Filter configs not yet measured
@@ -401,7 +405,7 @@ def build_lut(
 
             # Save incrementally
             table.save(output_path)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"Failed to measure {config.to_key()}: {e}")
 
     return table

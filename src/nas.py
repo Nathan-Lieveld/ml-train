@@ -21,7 +21,7 @@ from .search_space import (
     mutate_config,
     sample_random_config,
 )
-from .train import train_epoch, validate
+from .train import CIFAR10_MEAN, CIFAR10_STD, _DEFAULT_WORKERS, train_epoch, validate
 
 
 def get_subset_dataloaders(
@@ -38,8 +38,8 @@ def get_subset_dataloaders(
         Tuple of (train_loader, val_loader)
     """
     normalize = transforms.Normalize(
-        mean=[0.4914, 0.4822, 0.4465],
-        std=[0.2470, 0.2435, 0.2616],
+        mean=CIFAR10_MEAN,
+        std=CIFAR10_STD,
     )
 
     train_transform = transforms.Compose([
@@ -73,10 +73,10 @@ def get_subset_dataloaders(
     val_subset = Subset(val_dataset, val_indices)
 
     train_loader = DataLoader(
-        train_subset, batch_size=batch_size, shuffle=True, num_workers=2
+        train_subset, batch_size=batch_size, shuffle=True, num_workers=_DEFAULT_WORKERS
     )
     val_loader = DataLoader(
-        val_subset, batch_size=batch_size, shuffle=False, num_workers=2
+        val_subset, batch_size=batch_size, shuffle=False, num_workers=_DEFAULT_WORKERS
     )
 
     return train_loader, val_loader
