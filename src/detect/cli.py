@@ -39,6 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--resume", type=str, default=None, help="Resume from checkpoint")
     p_train.add_argument("--no-cache", action="store_true", help="Disable mmap cache")
     p_train.add_argument("--imgsz", type=int, default=640)
+    p_train.add_argument("--workers", type=int, default=None, help="DataLoader workers (default: 0 Win, 4 Linux)")
 
     # --- eval ---
     p_eval = sub.add_parser("eval", help="Evaluate a detection model")
@@ -72,17 +73,30 @@ def _build_model(name: str, nc: int) -> torch.nn.Module:
     return constructors[name](nc=nc)
 
 
-def _load_data(data_path: str) -> tuple[object, int]:
+def _load_data(
+    data_path: str,
+    splits: tuple[str, ...] = ("train", "val"),
+) -> tuple[object, int]:
     """Auto-detect data format and load annotations. Returns (DataFrame, nc)."""
+    import yaml
+
     from src.detect.data import load_coco_annotations, load_yolo_annotations
 
     p = Path(data_path)
     if p.suffix == ".json":
         df = load_coco_annotations(p)
-        nc = df.filter(df["cls"] >= 0)["cls"].n_unique() if not df.is_empty() else 80
+        nc = int(df.filter(df["cls"] >= 0)["cls"].max()) + 1 if not df.is_empty() else 80
     elif p.suffix in (".yaml", ".yml"):
-        df = load_yolo_annotations(p)
-        nc = df.filter(df["cls"] >= 0)["cls"].n_unique() if not df.is_empty() else 80
+        df = load_yolo_annotations(p, splits=splits)
+        # Prefer explicit nc from YAML; fall back to max class ID + 1.
+        with open(p) as f:
+            cfg = yaml.safe_load(f)
+        if "nc" in cfg:
+            nc = int(cfg["nc"])
+        elif not df.is_empty():
+            nc = int(df.filter(df["cls"] >= 0)["cls"].max()) + 1
+        else:
+            nc = 80
     else:
         raise ValueError(f"Unsupported data format: {p.suffix} (expected .json or .yaml)")
     return df, max(nc, 1)
@@ -90,29 +104,72 @@ def _load_data(data_path: str) -> tuple[object, int]:
 
 def _cmd_train(args: argparse.Namespace) -> None:
     from src.detect.augment import Compose, LetterBox, RandomFlip, RandomHSV
-    from src.detect.data import DiskImageStore, DetectionDataset, create_dataloader
+    from src.detect.data import (
+        DiskImageStore,
+        DetectionDataset,
+        MmapImageStore,
+        build_cache,
+        create_dataloader,
+    )
     from src.detect.models import load_ultralytics_weights
     from src.detect.train import train
 
-    df, nc = _load_data(args.data)
+    train_df, nc = _load_data(args.data, splits=("train",))
     device = _get_device(args.device)
 
     model = _build_model(args.model, nc)
     if args.weights:
         load_ultralytics_weights(model, args.weights)
 
-    store = DiskImageStore(df)
-    transforms = Compose([
+    # --- Train dataloader ---
+    if args.no_cache:
+        train_store = DiskImageStore(train_df)
+    else:
+        cache_dir = Path(args.save_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / "train.cache"
+        if not cache_path.is_file():
+            logger.info("Building mmap image cache at %s ...", cache_path)
+            build_cache(train_df, cache_path, imgsz=args.imgsz)
+        train_store = MmapImageStore(cache_path)
+
+    train_transforms = Compose([
         LetterBox(args.imgsz),
         RandomHSV(),
         RandomFlip(),
     ])
-    dataset = DetectionDataset(df, store, transforms=transforms, imgsz=args.imgsz)
-    train_loader = create_dataloader(dataset, batch_size=args.batch, shuffle=True)
+    train_dataset = DetectionDataset(
+        train_df, train_store, transforms=train_transforms, imgsz=args.imgsz,
+    )
+    train_loader = create_dataloader(
+        train_dataset, batch_size=args.batch, shuffle=True, num_workers=args.workers,
+    )
+
+    # --- Val dataloader (if val split exists) ---
+    val_loader = None
+    val_df, _ = _load_data(args.data, splits=("val",))
+    if not val_df.is_empty():
+        if args.no_cache:
+            val_store = DiskImageStore(val_df)
+        else:
+            val_cache_path = cache_dir / "val.cache"
+            if not val_cache_path.is_file():
+                logger.info("Building mmap val cache at %s ...", val_cache_path)
+                build_cache(val_df, val_cache_path, imgsz=args.imgsz)
+            val_store = MmapImageStore(val_cache_path)
+
+        val_transforms = Compose([LetterBox(args.imgsz)])
+        val_dataset = DetectionDataset(
+            val_df, val_store, transforms=val_transforms, imgsz=args.imgsz,
+        )
+        val_loader = create_dataloader(
+            val_dataset, batch_size=args.batch, shuffle=False, num_workers=args.workers,
+        )
 
     train(
         model,
         train_loader,
+        val_loader=val_loader,
         epochs=args.epochs,
         lr=args.lr,
         device=device,

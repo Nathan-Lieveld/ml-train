@@ -43,7 +43,6 @@ def non_max_suppression(
         raise ValueError(f"preds must be 3D (B, N, 4+nc), got shape {preds.shape}")
 
     batch_size = preds.shape[0]
-    preds.shape[2] - 4
     results: list[torch.Tensor] = []
 
     for i in range(batch_size):
@@ -143,26 +142,22 @@ def _match_predictions(
     # Compute IoU matrix (N_pred, N_gt)
     iou_matrix = torchvision.ops.box_iou(pred_boxes, gt_boxes).cpu().numpy()
 
-    matched_gt: set[int] = set()
+    # Class match mask: zero out IoU where classes differ
+    pred_cls_np = pred_cls.cpu().numpy()
+    gt_cls_np = gt_cls.cpu().numpy()
+    class_mask = pred_cls_np[:, None] == gt_cls_np[None, :]  # (N_pred, N_gt)
+    valid_iou = iou_matrix * class_mask
+    valid_iou[valid_iou < iou_threshold] = 0.0
+
+    # Greedy matching: for each prediction, pick best available GT
+    matched_gt = np.zeros(n_gt, dtype=bool)
     for pi in range(n_pred):
-        if pred_cls[pi].item() not in gt_cls.tolist():
-            continue
-
-        # Find best matching GT of same class
-        best_iou = 0.0
-        best_gi = -1
-        for gi in range(n_gt):
-            if gi in matched_gt:
-                continue
-            if gt_cls[gi].item() != pred_cls[pi].item():
-                continue
-            if iou_matrix[pi, gi] > best_iou:
-                best_iou = iou_matrix[pi, gi]
-                best_gi = gi
-
-        if best_iou >= iou_threshold and best_gi >= 0:
+        ious = valid_iou[pi].copy()
+        ious[matched_gt] = 0.0
+        best_gi = ious.argmax()
+        if ious[best_gi] > 0:
             tp[pi] = True
-            matched_gt.add(best_gi)
+            matched_gt[best_gi] = True
 
     return tp, np.ones(n_pred)
 

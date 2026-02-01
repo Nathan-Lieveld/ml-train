@@ -359,19 +359,13 @@ class TaskAlignedAssigner:
 
         # Soft scores: one-hot × alignment metric
         target_scores = F.one_hot(target_labels.clamp(0), self.nc).float()  # (B, A, nc)
-        metric_masked.amax(dim=1, keepdim=False)  # (B, A)
         max_metric_per_gt = metric_masked.amax(dim=2, keepdim=True)  # (B, M, 1)
-        norm_metric = metric_masked / (max_metric_per_gt + EPS)
-        norm_score = norm_metric.gather(1, target_gt_idx.unsqueeze(1).expand(-1, M, -1))
-        norm_score = norm_score[:, 0, :]  # (B, A) — take first GT dim, others resolved
-        # Re-index properly
-        norm_score = torch.zeros(B, A, device=device)
-        for b in range(B):
-            for a in range(A):
-                if fg_mask[b, a]:
-                    gi = target_gt_idx[b, a]
-                    denom = max_metric_per_gt[b, gi, 0] + EPS
-                    norm_score[b, a] = align_metric[b, gi, a] / denom
+        # Gather the alignment metric and its GT-max for each anchor's assigned GT
+        gt_idx_expanded = target_gt_idx.unsqueeze(1)  # (B, 1, A)
+        align_for_assigned = align_metric.gather(1, gt_idx_expanded).squeeze(1)  # (B, A)
+        max_for_assigned = max_metric_per_gt.squeeze(-1).gather(1, target_gt_idx)  # (B, A)
+        norm_score = align_for_assigned / (max_for_assigned + EPS)
+        norm_score *= fg_mask.float()
         target_scores *= norm_score.unsqueeze(-1)
         target_scores *= fg_mask.unsqueeze(-1).float()
 
@@ -382,20 +376,17 @@ class TaskAlignedAssigner:
         gt_bboxes: torch.Tensor, pred_bboxes: torch.Tensor
     ) -> torch.Tensor:
         """Pairwise IoU: (B, M, 4) × (B, A, 4) → (B, M, A)."""
-        B, M, _ = gt_bboxes.shape
-        A = pred_bboxes.shape[1]
+        gt = gt_bboxes.unsqueeze(2)  # (B, M, 1, 4)
+        pd = pred_bboxes.unsqueeze(1)  # (B, 1, A, 4)
 
-        gt = gt_bboxes.unsqueeze(2).expand(-1, -1, A, -1)  # (B, M, A, 4)
-        pd = pred_bboxes.unsqueeze(1).expand(-1, M, -1, -1)  # (B, M, A, 4)
-
-        inter_x1 = torch.max(gt[..., 0], pd[..., 0])
+        inter_x1 = torch.max(gt[..., 0], pd[..., 0])  # (B, M, A) via broadcast
         inter_y1 = torch.max(gt[..., 1], pd[..., 1])
         inter_x2 = torch.min(gt[..., 2], pd[..., 2])
         inter_y2 = torch.min(gt[..., 3], pd[..., 3])
         inter = (inter_x2 - inter_x1).clamp_(0) * (inter_y2 - inter_y1).clamp_(0)
 
-        area_gt = (gt[..., 2] - gt[..., 0]) * (gt[..., 3] - gt[..., 1])
-        area_pd = (pd[..., 2] - pd[..., 0]) * (pd[..., 3] - pd[..., 1])
+        area_gt = (gt[..., 2] - gt[..., 0]) * (gt[..., 3] - gt[..., 1])  # (B, M, 1)
+        area_pd = (pd[..., 2] - pd[..., 0]) * (pd[..., 3] - pd[..., 1])  # (B, 1, A)
         return inter / (area_gt + area_pd - inter + EPS)
 
     @staticmethod
@@ -403,9 +394,6 @@ class TaskAlignedAssigner:
         anchor_points: torch.Tensor, gt_bboxes: torch.Tensor
     ) -> torch.Tensor:
         """Check if anchor centers fall inside GT boxes. Returns (B, M, A) bool."""
-        B, M, _ = gt_bboxes.shape
-        anchor_points.shape[0]
-
         ap = anchor_points.unsqueeze(0).unsqueeze(0)  # (1, 1, A, 2)
         gt = gt_bboxes.unsqueeze(2)  # (B, M, 1, 4)
 
@@ -484,8 +472,6 @@ class DetectionLoss(nn.Module):
         )
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # (B, A, nc)
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # (B, A, 4*reg_max)
-
-        pred_scores.shape[1]
 
         # Generate anchors
         anchor_points, stride_tensor = make_anchors(preds, self.stride, 0.5)

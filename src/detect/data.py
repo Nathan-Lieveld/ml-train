@@ -36,7 +36,10 @@ INDEX_ENTRY_SIZE = 16  # offset(8) + nbytes(4) + H(2) + W(2)
 # ---------------------------------------------------------------------------
 
 
-def load_yolo_annotations(data_yaml: str | Path) -> pl.DataFrame:
+def load_yolo_annotations(
+    data_yaml: str | Path,
+    splits: tuple[str, ...] = ("train", "val"),
+) -> pl.DataFrame:
     """Parse YOLO-format labels directory from a data YAML file.
 
     The YAML must contain ``train`` and/or ``val`` keys pointing to image directories.
@@ -63,7 +66,7 @@ def load_yolo_annotations(data_yaml: str | Path) -> pl.DataFrame:
     rows: list[dict[str, Any]] = []
     image_id = 0
 
-    for split in ("train", "val"):
+    for split in splits:
         if split not in cfg:
             continue
         img_dir = root / cfg[split]
@@ -328,7 +331,6 @@ class MmapImageStore:
     def __getitem__(self, idx: int) -> torch.Tensor:
         offset, nbytes, h, w = self._index[idx]
         buf = self._mm[offset : offset + nbytes]
-        np.frombuffer(buf, dtype=np.uint8).reshape(3, h, w)
         return torch.frombuffer(bytearray(buf), dtype=torch.uint8).reshape(3, h, w)
 
     def close(self) -> None:
@@ -392,6 +394,9 @@ class DetectionDataset(Dataset[dict[str, Any]]):
         self.store = image_store
         self.transforms = transforms
         self.imgsz = imgsz
+        # YOLO-format DataFrames have a "cx" column and bboxes in [0,1];
+        # COCO-format DataFrames have pixel-coordinate bboxes already.
+        self._normalized = "cx" in df.columns
 
         # Group annotations by image_id
         self._image_ids = sorted(df["image_id"].unique().to_list())
@@ -417,6 +422,13 @@ class DetectionDataset(Dataset[dict[str, Any]]):
         else:
             bboxes = torch.zeros(0, 4, dtype=torch.float32)
             cls = torch.zeros(0, dtype=torch.long)
+
+        # Denormalize YOLO-format bboxes ([0,1] range) to pixel coordinates.
+        # COCO-format bboxes are already in pixels and unaffected.
+        if bboxes.numel() > 0 and self._normalized:
+            _, h, w = img.shape
+            bboxes[:, [0, 2]] *= w
+            bboxes[:, [1, 3]] *= h
 
         sample: dict[str, Any] = {"img": img, "bboxes": bboxes, "cls": cls}
 
@@ -458,16 +470,24 @@ def create_dataloader(
     dataset: DetectionDataset,
     batch_size: int = 16,
     shuffle: bool = True,
+    num_workers: int | None = None,
 ) -> DataLoader[dict[str, Any]]:
     """Create a detection DataLoader with custom collation.
 
-    Uses num_workers=0 for cross-platform safety.
+    Workers default to 0 on Windows (multiprocessing issues) and 4 on Linux.
     """
+    import sys
+
+    if num_workers is None:
+        num_workers = 0 if sys.platform == "win32" else 4
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=0,
+        num_workers=num_workers,
         collate_fn=_collate_fn,
         drop_last=False,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
     )

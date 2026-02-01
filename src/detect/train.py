@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -57,10 +58,13 @@ class ModelEMA:
         self.updates += 1
         d = self.decay * (1 - math.exp(-self.updates / self.tau))
         with torch.no_grad():
-            msd = model.state_dict()
-            for k, v in self.ema.state_dict().items():
-                if v.is_floating_point():
-                    v.lerp_(msd[k].to(v.device), 1 - d)
+            for p_ema, p_model in zip(self.ema.parameters(), model.parameters()):
+                p_ema.lerp_(p_model.to(p_ema.device), 1 - d)
+            for b_ema, b_model in zip(self.ema.buffers(), model.buffers()):
+                if b_ema.is_floating_point():
+                    b_ema.lerp_(b_model.to(b_ema.device), 1 - d)
+                else:
+                    b_ema.copy_(b_model)
 
     @property
     def module(self) -> nn.Module:
@@ -200,17 +204,33 @@ def train(
     for epoch in range(start_epoch, epochs):
         model.train()
         epoch_loss = 0.0
+        epoch_box_loss = 0.0
+        epoch_cls_loss = 0.0
+        epoch_dfl_loss = 0.0
         num_batches = 0
+        num_images = 0
         optimizer_steps = 0
+        data_time = 0.0
+        compute_time = 0.0
 
         # Set LR
         current_lr = _cosine_lr(epoch, epochs, warmup_epochs, lr)
         for pg in optimizer.param_groups:
             pg["lr"] = current_lr
 
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
+
+        epoch_t0 = time.perf_counter()
+        t_iter_start = time.perf_counter()
+
         for batch_idx, batch in enumerate(train_loader):
+            t_data_end = time.perf_counter()
+            data_time += t_data_end - t_iter_start
+
             images = batch["images"].to(device)
             targets = batch["targets"].to(device)
+            num_images += images.shape[0]
 
             with torch.amp.autocast(device_type=device.type, enabled=device.type == "cuda"):
                 preds = model(images)
@@ -221,11 +241,15 @@ def train(
             if not torch.isfinite(loss):
                 logger.warning("Non-finite loss at epoch %d batch %d, skipping", epoch, batch_idx)
                 optimizer.zero_grad()
+                compute_time += time.perf_counter() - t_data_end
+                t_iter_start = time.perf_counter()
                 continue
 
             scaler.scale(loss).backward()
 
             if (batch_idx + 1) % accumulate == 0 or (batch_idx + 1) == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
@@ -233,21 +257,44 @@ def train(
                 optimizer_steps += 1
 
             epoch_loss += loss.item() * accumulate
+            epoch_box_loss += loss_items["box"]
+            epoch_cls_loss += loss_items["cls"]
+            epoch_dfl_loss += loss_items["dfl"]
             num_batches += 1
 
-        avg_loss = epoch_loss / max(num_batches, 1)
+            compute_time += time.perf_counter() - t_data_end
+            t_iter_start = time.perf_counter()
+
+        epoch_time = time.perf_counter() - epoch_t0
+        n = max(num_batches, 1)
+        avg_loss = epoch_loss / n
+        throughput = num_images / epoch_time if epoch_time > 0 else 0.0
+
         logger.info(
-            "Epoch %d/%d  lr=%.6f  loss=%.4f  steps=%d",
-            epoch + 1, epochs, current_lr, avg_loss, optimizer_steps,
+            "Epoch %d/%d  lr=%.6f  loss=%.4f (box=%.4f cls=%.4f dfl=%.4f)  steps=%d",
+            epoch + 1, epochs, current_lr, avg_loss,
+            epoch_box_loss / n, epoch_cls_loss / n, epoch_dfl_loss / n,
+            optimizer_steps,
+        )
+        mem_str = ""
+        if device.type == "cuda":
+            peak_mem_gb = torch.cuda.max_memory_allocated(device) / (1024 ** 3)
+            mem_str = f"  mem={peak_mem_gb:.2f}GB"
+        logger.info(
+            "  %.1fs (data=%.1fs compute=%.1fs)  %.1f img/s%s",
+            epoch_time, data_time, compute_time, throughput, mem_str,
         )
 
         # Evaluate
         metrics: dict[str, float] = {}
         if val_loader is not None:
+            eval_t0 = time.perf_counter()
             metrics = evaluate(ema.module, val_loader, device)
+            eval_time = time.perf_counter() - eval_t0
             current_map = metrics.get("mAP50_95", 0.0)
             logger.info(
-                "  mAP50=%.4f  mAP50_95=%.4f", metrics.get("mAP50", 0.0), current_map
+                "  mAP50=%.4f  mAP50_95=%.4f  eval=%.1fs",
+                metrics.get("mAP50", 0.0), current_map, eval_time,
             )
         else:
             current_map = 0.0
